@@ -6,8 +6,8 @@ name: obs-blue
 description: A dedicated bootc image for running OBS and allowing stream automation.
 
 # the base image to build on top of (FROM) and the version tag to use
-base-image: ghcr.io/ublue-os/silverblue-main
-image-version: 42 # latest is also supported if you want new updates ASAP
+base-image: ghcr.io/ublue-os/kinoite-main
+image-version: 44 # latest is also supported if you want new updates ASAP
 
 # module configuration, executed in order
 # you can include multiple instances of the same module
@@ -40,7 +40,7 @@ modules:
         # If no repo information is specified, Flathub will be used by default
         install: # system flatpaks we want all users to have and not remove
           - org.mozilla.firefox
-          - org.gnome.Loupe
+          - org.kde.gwenview
           - com.obsproject.Studio
           - org.chromium.Chromium
       - scope: user # Also add Flathub user repo, but no user packages

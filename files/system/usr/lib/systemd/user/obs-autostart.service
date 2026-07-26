@@ -1,13 +1,14 @@
 [Unit]
 Description=OBS Studio Autostart
-After=network-online.target
+After=network-online.target graphical-session.target
 Wants=network-online.target
-PartOf=graphical-session.target
+BindsTo=graphical-session.target
 
 [Service]
 Type=exec
 ExecStart=flatpak run com.obsproject.Studio
-Restart=no
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=default.target
