@@ -1,0 +1,13 @@
+[Unit]
+Description=Chromium Autostart
+After=network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=flatpak run org.chromium.Chromium
+Restart=no
+
+[Install]
+WantedBy=default.target
