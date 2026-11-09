@@ -4,3 +4,8 @@ cosign.private
 *.iso
 *.iso-CHECKSUM
 .kilo
+
+# Contains live Facebook cookies, stream key, and passwords
+orig_scripts/
+# Site-specific install config (password hash, Facebook IDs, SSN session)
+site/
