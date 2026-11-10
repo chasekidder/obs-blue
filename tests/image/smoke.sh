@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Container smoke test for the obs-blue image.
+#   usage: tests/image/smoke.sh <image>
+# Runs one `podman run --rm <image> bash -c ...` per check group and exits
+# non-zero on the first failing group. Everything runs as root inside the
+# container (no privileges, no host mounts).
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: $0 <image>" >&2
+  exit 2
+fi
+image="$1"
+
+# Secret patterns are written as bracket expressions so this file never
+# contains them literally (the repo-wide secret grep must stay clean).
+SECRET_RE='***REMOVED***|***REMOVED***|FB-[0-9]{6,}-'
+
+group() {  # group <title> <script>
+  local title="$1" script="$2"
+  echo
+  echo "=== ${title}"
+  if ! podman run --rm "$image" bash -c "set -euo pipefail; ${script}"; then
+    echo "SMOKE FAIL: ${title}" >&2
+    exit 1
+  fi
+}
+
+group "stream-pilot CLI" '
+help=$(stream-pilot --help)
+echo "$help"
+grep -q selftest-cdp <<< "$help"
+'
+
+group "Playwright attaches to the system Chromium over CDP (selftest-cdp)" '
+stream-pilot selftest-cdp
+'
+
+group "packages: obs-studio, chromium present; obs browser plugin (CEF) absent" '
+rpm -q obs-studio chromium
+if rpm -q obs-studio-plugin-browser; then
+  echo "obs-studio-plugin-browser must not be installed (no CEF)" >&2
+  exit 1
+fi
+test -x /usr/bin/chromium-browser
+'
+
+group "OBS runs and hardware-encoder plugins" '
+if out=$(QT_QPA_PLATFORM=offscreen timeout 60 obs --version 2>&1); then
+  echo "obs --version: $out"
+else
+  echo "obs --version did not run (rc=$?; may need a display): $out"
+  echo "falling back to the rpm file check"
+fi
+files=$(rpm -ql obs-studio)   # not piped into grep -q: SIGPIPE + pipefail
+grep -q obs-ffmpeg <<< "$files"
+echo "OBS encoder plugins in /usr/lib64/obs-plugins:"
+ls /usr/lib64/obs-plugins | grep -E "obs-ffmpeg|obs-qsv"
+'
+
+group "Chromium managed policy" '
+policy=/etc/chromium/policies/managed/stream-pilot.json
+test -f "$policy"
+python3 -m json.tool "$policy" > /dev/null
+echo "$policy is valid JSON"
+'
+
+group "systemd user units: syntax, enablement, oomd drop-in" '
+export XDG_RUNTIME_DIR=$(mktemp -d)
+chmod 700 "$XDG_RUNTIME_DIR"
+units=/usr/lib/systemd/user
+for u in obs chromium stream-pilot; do
+  test -f "$units/$u.service"
+  test -L "/etc/systemd/user/graphical-session.target.wants/$u.service"
+done
+# systemd-analyze exits non-zero in some containers for reasons unrelated to
+# the unit files, so judge the output: any complaint that names one of our
+# units (Unknown key/section, Invalid argument, bad setting, ...) fails.
+out=$(systemd-analyze verify --user "$units/obs.service" "$units/chromium.service" "$units/stream-pilot.service" 2>&1 || true)
+echo "systemd-analyze verify output: ${out:-<none>}"
+if echo "$out" | grep -E "(obs|chromium|stream-pilot)\.service" | grep -iE "unknown|invalid|bad|error|failed to parse|not found"; then
+  echo "unit syntax problem" >&2
+  exit 1
+fi
+if echo "$out" | grep -iE "Failed to (parse|initialize)" | grep -vi "manager"; then
+  echo "unit syntax problem" >&2
+  exit 1
+fi
+test -f /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
+grep -q "ManagedOOMMemoryPressure=auto" /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
+'
+
+group "system configuration files" '
+test -f /usr/lib/sysctl.d/90-stream-pilot-zram.conf
+test -f /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf
+test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
+test -f /etc/xdg/kwinrulesrc
+test -f /etc/plasmalogin.conf.d/50-stream-autologin.conf
+test -x /etc/greenboot/check/required.d/50-stream-pilot.sh
+bash -n /etc/greenboot/check/required.d/50-stream-pilot.sh
+test -f /etc/stream-pilot/config.toml
+echo "all present"
+'
+
+group "seed-obs produces a scrubbed, usable OBS config" '
+export HOME=/tmp/h
+mkdir -p "$HOME"
+stream-pilot seed-obs
+obs_dir=$HOME/.config/obs-studio
+test -f "$obs_dir/user.ini"
+if grep -q "^\[Locations\]" "$obs_dir/user.ini"; then
+  echo "[Locations] must not be in the seeded user.ini" >&2
+  exit 1
+fi
+if grep -rE "@(MAIN_CAMERA_DEVICE|JEWELRY_CAMERA_DEVICE|MICROPHONE_DEVICE)@" "$obs_dir"; then
+  echo "unresolved device placeholder in seeded OBS config" >&2
+  exit 1
+fi
+test -f "$obs_dir/plugin_config/obs-websocket/config.json"
+python3 -m json.tool "$obs_dir/plugin_config/obs-websocket/config.json" > /dev/null
+test -f "$HOME/.config/stream-pilot/secrets.toml"
+echo "seeded files:"
+(cd "$obs_dir" && find . -type f | sort)
+'
+
+group "no secrets baked into the image" "
+if grep -rlE '${SECRET_RE}' /usr/share/stream-pilot /etc/stream-pilot /usr/lib/stream-pilot; then
+  echo 'secret-looking value found in the image (files listed above)' >&2
+  exit 1
+fi
+echo 'none found'
+"
+
+echo
+echo "SMOKE PASS: ${image}"

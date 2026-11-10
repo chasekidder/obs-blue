@@ -40,3 +40,40 @@ jobs:
 
           # enabled by default, disable if your image is small and you want faster builds
           maximize_build_space: true
+
+  unit:
+    name: stream-pilot unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Run the host unit tests
+        run: |
+          cd stream-pilot
+          python3 -m venv .venv
+          .venv/bin/pip install -e '.[dev]'
+          .venv/bin/pytest -q
+
+  smoke:
+    name: Image smoke test (incl. Playwright/Chromium CDP check)
+    needs: bluebuild
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/obs-blue:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to ghcr.io (read-only)
+        run: |
+          echo "${{ github.token }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Pull the freshly built image
+        run: podman pull "$IMAGE"
+      - name: Run the smoke test
+        run: bash tests/image/smoke.sh "$IMAGE"

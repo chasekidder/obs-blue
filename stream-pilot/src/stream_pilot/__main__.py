@@ -19,6 +19,7 @@ from .chromium_prep import prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
 from .seed_obs import reset_scenes, seed_obs
+from .selftest import selftest_cdp
 
 log = logging.getLogger("stream_pilot")
 
@@ -140,6 +141,18 @@ def cmd_chromium_prep(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_selftest_cdp(args: argparse.Namespace) -> int:
+    """CI check: pinned Playwright must still attach to the image's Chromium."""
+    chromium_bin = args.chromium_bin
+    if chromium_bin is None:
+        try:
+            chromium_bin = _load_config().cdp.chromium_bin
+        except Exception as exc:
+            print(f"selftest-cdp: cannot load config: {exc}", file=sys.stderr)
+            return 1
+    return asyncio.run(selftest_cdp(chromium_bin))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stream-pilot",
@@ -154,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
         "health": (cmd_health, "wait for the system to be healthy"),
         "seed-obs": (cmd_seed_obs, "seed the OBS configuration"),
         "chromium-prep": (cmd_chromium_prep, "clear Chromium crash flags"),
+        "selftest-cdp": (
+            cmd_selftest_cdp,
+            "check that Playwright can attach to the system Chromium over CDP",
+        ),
     }
     parsers = {}
     for name, (func, help_text) in handlers.items():
@@ -171,6 +188,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-apply camera/microphone IDs from site.toml (backs up the "
         "current scene collection); stop OBS first",
+    )
+    parsers["selftest-cdp"].add_argument(
+        "--chromium-bin",
+        default=None,
+        metavar="PATH",
+        help="Chromium executable (default: cdp.chromium_bin from the config)",
     )
     parsers["health"].add_argument(
         "--timeout",
