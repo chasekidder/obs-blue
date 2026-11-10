@@ -11,6 +11,7 @@ raised.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,28 @@ class Script:
             raise exc
 
 
-class FakeObs:
+class Gated:
+    """Per-method hooks and gates for tests.
+
+    ``self.hooks["name"] = fn`` runs ``fn()`` when the method is entered;
+    ``self.gates["name"] = asyncio.Event()`` makes the method block until the
+    event is set (never set it to simulate a hung adapter).
+    """
+
+    def _init_gated(self) -> None:
+        self.hooks: dict[str, Any] = {}
+        self.gates: dict[str, asyncio.Event] = {}
+
+    async def _gated(self, name: str) -> None:
+        hook = self.hooks.get(name)
+        if hook is not None:
+            hook()
+        gate = self.gates.get(name)
+        if gate is not None:
+            await gate.wait()
+
+
+class FakeObs(Gated):
     def __init__(
         self,
         *,
@@ -48,6 +70,7 @@ class FakeObs:
         stop_keeps_active: bool = False,
         calls: list | None = None,
     ):
+        self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self.active = active
         self.scene = scene
@@ -69,6 +92,7 @@ class FakeObs:
 
     async def stream_active(self) -> bool:
         self.calls.append(("obs.stream_active",))
+        await self._gated("stream_active")
         self._active.raise_next()
         return self.active
 
@@ -88,15 +112,17 @@ class FakeObs:
 
     async def set_scene(self, name: str) -> None:
         self.calls.append(("obs.set_scene", name))
+        await self._gated("set_scene")
         self._set_scene.raise_next()
         self.scene = name
 
     async def current_scene(self) -> str:
         self.calls.append(("obs.current_scene",))
+        await self._gated("current_scene")
         return self.scene
 
 
-class FakeFacebook:
+class FakeFacebook(Gated):
     def __init__(
         self,
         *,
@@ -116,6 +142,7 @@ class FakeFacebook:
         close_raises: Any = None,
         calls: list | None = None,
     ):
+        self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self.target = target or StreamTarget("rtmps://fb.example/rtmp/", "KEY")
         self.live_id = live_id
@@ -138,6 +165,7 @@ class FakeFacebook:
 
     async def reachable(self) -> bool:
         self.calls.append(("fb.reachable",))
+        await self._gated("reachable")
         return self._reachable.next()
 
     async def logged_in(self) -> bool:
@@ -158,16 +186,19 @@ class FakeFacebook:
 
     async def preview_lost(self) -> bool:
         self.calls.append(("fb.preview_lost",))
+        await self._gated("preview_lost")
         self._preview_lost_raises.raise_next()
         return self._preview_lost.next()
 
     async def go_live(self, timeout_s: float) -> str:
         self.calls.append(("fb.go_live", timeout_s))
+        await self._gated("go_live")
         self._go_live.raise_next()
         return self.live_id
 
     async def open_comments(self, live_id: str) -> None:
         self.calls.append(("fb.open_comments", live_id))
+        await self._gated("open_comments")
         self._open_comments.raise_next()
 
     async def park_dashboard(self) -> None:
@@ -242,13 +273,15 @@ class FakeSystem:
         self._stop_unit.raise_next()
 
 
-class FakeCamera:
+class FakeCamera(Gated):
     def __init__(self, *, raises: Any = None, calls: list | None = None):
+        self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self._raises = Script(raises)
 
     async def set_autofocus(self, device: str, on: bool) -> None:
         self.calls.append(("camera.set_autofocus", device, on))
+        await self._gated("set_autofocus")
         self._raises.raise_next()
 
 

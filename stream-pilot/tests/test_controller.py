@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from stream_pilot import controller as controller_mod
 from stream_pilot.comment_log import build_report
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
@@ -141,6 +142,13 @@ class Rig:
 
     async def settle(self) -> None:
         await asyncio.wait_for(self.c.wait_idle(), 2)
+
+    async def wait_call(self, obj, name: str) -> None:
+        for _ in range(2000):
+            if name in self.names(obj):
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f"{name} never called")
 
     async def wait_state(self, state: State) -> None:
         for _ in range(2000):
@@ -1079,6 +1087,202 @@ async def test_handle_swallows_unexpected_errors(rig, monkeypatch):
     monkeypatch.setattr(rig.c, "_camera_press", boom)
     await rig.c.handle(DeckPress(2))  # must not raise
     assert rig.c.state == State.READY
+
+
+# ------------------------------------------------- fix round 1: post-go-live
+
+
+async def test_live_is_persisted_before_open_comments(rig):
+    seen = []
+    rig.fb.hooks["open_comments"] = lambda: seen.append(rig.state_json)
+    await rig.to_ready()
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert len(seen) == 1
+    assert seen[0] == {
+        "state": "LIVE",
+        "live_id": "123456789",
+        "stream_dir": str(rig.c.stream_dir),
+    }
+    assert rig.status_json["state"] == "LIVE"
+    assert rig.deck.faces[0] == STATUS_FACES[State.LIVE]
+
+
+async def _live_with_hung_open_comments(rig):
+    await rig.to_ready()
+    rig.fb.gates["open_comments"] = asyncio.Event()  # never set: slow adapter
+    await rig.c.handle(DeckPress(0))
+    await rig.wait_call(rig.fb, "fb.open_comments")
+    assert rig.c.state == State.LIVE
+    assert "capture.start" not in rig.names(rig.capture)
+
+
+async def test_power_during_slow_open_comments_runs_normal_end_flow(make):
+    rig = make(shared=True)
+    await _live_with_hung_open_comments(rig)
+    stream_dir = rig.c.stream_dir
+    (stream_dir / "comments.jsonl").write_text(
+        json.dumps(
+            {"captured_at": 1.0, "source": "fb_dom", "author": "Ann", "text": "x", "live_id": "123456789"}
+        )
+        + "\n"
+    )
+    rig.clear()
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert [c for c in rig.shared if c[0] != "sleep"] == [
+        ("obs.stop_stream",),
+        ("obs.stream_active",),
+        ("capture.stop",),
+        ("fb.close_browser",),
+        ("system.stop_user_unit", "obs.service"),
+        ("system.poweroff",),
+    ]
+    assert (stream_dir / "report.txt").read_text() == build_report(stream_dir / "comments.jsonl")
+    assert "fb.park_dashboard" not in rig.names(rig.fb)  # half-done steps cancelled
+
+
+async def test_long_press_during_slow_open_comments_ends_without_power_off(rig):
+    await _live_with_hung_open_comments(rig)
+    rig.clear()
+    rig.fb.gates.clear()
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.obs.calls[0] == ("obs.stop_stream",)
+    assert ("system.poweroff",) not in rig.system.calls
+
+
+async def test_obs_events_during_post_go_live_steps_follow_live_rules(rig):
+    await _live_with_hung_open_comments(rig)
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=True))
+    assert rig.c.state == State.RECONNECTING
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=False))
+    assert rig.c.state == State.LIVE
+    assert "obs.stop_stream" not in rig.names(rig.obs)
+
+
+async def test_post_go_live_steps_run_in_live_after_open_comments_released(rig):
+    await _live_with_hung_open_comments(rig)
+    rig.fb.gates["open_comments"].set()
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.capture.calls[0][0] == "capture.start"
+    assert ("fb.park_dashboard",) in rig.fb.calls
+
+
+# ------------------------------------------- fix round 1: power during long-press end
+
+
+async def test_power_press_during_long_press_end_powers_off_instead_of_setup(rig):
+    await rig.to_live()
+    rig.clear()
+    await rig.c.handle(DeckPress(0, long=True))
+    assert rig.c.state == State.ENDING
+    await rig.c.handle(PowerPress())  # used to be dropped
+    await rig.settle()
+    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.fb.calls == [("fb.close_browser",)]  # no setup flow started
+    assert rig.obs.calls.count(("obs.stop_stream",)) == 1
+    assert rig.c.state == State.ENDING
+
+
+async def test_power_press_after_long_press_end_branch_point_shuts_down(make):
+    rig = make()
+    await rig.to_live()
+    rig.clear()
+    rig.fb.gates["reachable"] = asyncio.Event()  # setup stalls right after the branch point
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.wait_call(rig.fb, "fb.reachable")
+    assert rig.c.state == State.ENDING
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.fb.calls.count(("fb.close_browser",)) == 1
+    assert "fb.setup_live" not in rig.names(rig.fb)
+
+
+async def test_two_power_presses_during_long_press_end_power_off_once(rig):
+    await rig.to_live()
+    rig.clear()
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(PowerPress())
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+
+
+# --------------------------------------------------- fix round 1: bounded inline awaits
+
+
+@pytest.fixture
+def short_inline_timeout(monkeypatch):
+    monkeypatch.setattr(controller_mod, "INLINE_TIMEOUT_S", 0.05)
+
+
+async def test_hung_preview_lost_does_not_block_handle(rig, short_inline_timeout, caplog):
+    await rig.to_ready()
+    rig.fb.gates["preview_lost"] = asyncio.Event()
+    await asyncio.wait_for(rig.c.handle(Tick()), 2)
+    assert rig.c.state == State.READY
+    assert "timed out" in caplog.text
+    # a queued power press is handled afterwards
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert ("system.poweroff",) in rig.system.calls
+
+
+async def test_hung_live_poll_means_no_action(rig, short_inline_timeout):
+    await rig.to_live()
+    rig.clear()
+    rig.obs.gates["stream_active"] = asyncio.Event()
+    await asyncio.wait_for(rig.c.handle(Tick()), 2)
+    assert rig.c.state == State.LIVE
+    assert rig.obs.calls == [("obs.stream_active",)]
+
+
+async def test_hung_set_scene_does_not_block_handle(rig, short_inline_timeout):
+    await rig.c.boot()
+    rig.obs.gates["set_scene"] = asyncio.Event()
+    await asyncio.wait_for(rig.c.handle(DeckPress(2)), 2)
+    assert rig.camera.calls == []
+    assert rig.deck.faces[2].bg == "#333333"
+
+
+async def test_hung_autofocus_does_not_block_handle(rig, short_inline_timeout):
+    await rig.c.boot()
+    rig.camera.gates["set_autofocus"] = asyncio.Event()
+    await asyncio.wait_for(rig.c.handle(DeckPress(2)), 2)
+    await asyncio.wait_for(rig.c.handle(DeckPress(1)), 2)
+    assert rig.deck.faces[1].label == "AF\nOFF"
+
+
+async def test_hung_current_scene_falls_back_to_main(rig, short_inline_timeout):
+    await rig.c.boot()
+    rig.obs.gates["current_scene"] = asyncio.Event()
+    await asyncio.wait_for(rig.c.handle(DeckPress(1)), 2)
+    assert rig.camera.calls == [("camera.set_autofocus", "/dev/video0", True)]
+
+
+# ------------------------------------------------ fix round 1: setup never stops a live
+
+
+async def test_setup_phase_refuses_stop_stream_while_live(rig):
+    await rig.c.boot()
+    await rig.settle()
+    rig.clear()
+
+    async def active_but_state_flipped_to_live():
+        rig.obs.calls.append(("obs.stream_active",))
+        rig.c.state = State.LIVE  # simulate a concurrent change
+        return True
+
+    rig.obs.stream_active = active_but_state_flipped_to_live
+    with pytest.raises(StepFailed) as exc:
+        await rig.c._setup_phase()
+    assert exc.value.step == "internal"
+    assert "obs.stop_stream" not in rig.names(rig.obs)
+    assert "obs.start_stream" not in rig.names(rig.obs)
 
 
 def test_live_states_constant_matches_controller_expectation():

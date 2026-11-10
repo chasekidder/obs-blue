@@ -57,6 +57,9 @@ log = logging.getLogger(__name__)
 CONNECT_RETRY_S = 2.0
 LOGIN_POLL_S = 5.0
 STOP_POLL_S = 0.5
+# Upper bound for awaits made inline from handle(): a hung adapter must never
+# keep a queued PowerPress waiting.
+INLINE_TIMEOUT_S = 5.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -119,6 +122,10 @@ class Controller:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_camera: str | None = None
         self._autofocus: dict[str, bool] = {}
+        # None: no end flow in progress; "end": long-press end flow before its
+        # branch point; "power": a power-off is in progress (further presses ignored).
+        self._end_mode: str | None = None
+        self._power_after_end = False
 
     # ------------------------------------------------------------------ public
 
@@ -130,6 +137,9 @@ class Controller:
         except RuntimeError:
             running = None
         if loop is None or running is loop:
+            # No loop captured yet means boot()/run() has not started. Adapters
+            # (deck, power key) are only started after run(), so nothing can call
+            # sink() from another thread here; put_nowait is safe (no getters yet).
             self._queue.put_nowait(event)
         else:
             loop.call_soon_threadsafe(self._queue.put_nowait, event)
@@ -250,6 +260,15 @@ class Controller:
 
     async def _on_power(self) -> None:
         if self.state == State.ENDING:
+            if self._end_mode == "end":
+                # Long-press end flow in progress: power off when it reaches its
+                # branch point instead of returning to setup.
+                self._power_after_end = True
+            elif self._end_mode is None:
+                # Past the end flow's branch point (setup after a long-press end,
+                # no live exists any more): shut down like any non-live state.
+                await self._start_flow(self._shutdown_flow, enter=State.ENDING)
+            # "power": a power-off is already running; ignore.
             return
         if self.state in LIVE_STATES:
             await self._begin_end(power_off=True)
@@ -258,6 +277,8 @@ class Controller:
 
     async def _begin_end(self, *, power_off: bool) -> None:
         await self._cancel(self._restart)
+        self._power_after_end = False
+        self._end_mode = "power" if power_off else "end"
         await self._start_flow(
             lambda: self._end_flow(power_off=power_off), enter=State.ENDING
         )
@@ -279,7 +300,7 @@ class Controller:
         self._write_status()
         if self.state == State.READY and self._flow_idle():
             try:
-                lost = await self.fb.preview_lost()
+                lost = await self._bounded("preview_lost", self.fb.preview_lost())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -295,7 +316,7 @@ class Controller:
             # Plan 3 hook: if the capture object has a healthy() method, poll it
             # here (hasattr check) and surface capture problems on the deck.
             try:
-                active = await self.obs.stream_active()
+                active = await self._bounded("stream_active", self.obs.stream_active())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -304,6 +325,15 @@ class Controller:
             if not active and self.state == State.LIVE:
                 log.warning("OBS stream inactive while LIVE; restarting it")
                 self._obs_gave_up()
+
+    @staticmethod
+    async def _bounded(name: str, aw: Awaitable):
+        """Await ``aw`` for at most INLINE_TIMEOUT_S (TimeoutError on expiry)."""
+        try:
+            return await asyncio.wait_for(aw, INLINE_TIMEOUT_S)
+        except TimeoutError:
+            log.warning("%s timed out after %.1fs", name, INLINE_TIMEOUT_S)
+            raise
 
     # ------------------------------------------------------- state/persistence
 
@@ -495,7 +525,11 @@ class Controller:
                 await self.obs.set_stream_target(target)
                 if await self.obs.stream_active():
                     # SETUP: no live exists (the live only starts with go-live),
-                    # so replacing the pre-roll stream is safe.
+                    # so replacing the pre-roll stream is safe. Local guard: never
+                    # stop the stream if we somehow are in a live state.
+                    if self.state in LIVE_STATES:
+                        log.error("refusing stop_stream during setup: state is %s", self.state)
+                        raise StepFailed("internal", f"setup reached stop_stream while {self.state}")
                     await self.obs.stop_stream()
                     await self._wait_stream_stopped()
                 await self.obs.start_stream()
@@ -573,11 +607,14 @@ class Controller:
         self._mkdir(stream_dir)
         self.live_id = live_id
         self.stream_dir = stream_dir
-        # The stream is live now: nothing below may turn into ERROR.
+        # The stream is live now: persist LIVE (with live_id) before anything else,
+        # so a crash resumes instead of re-running setup, and a power/long-press
+        # during the steps below runs the normal live end flow (cancelling this flow).
+        self._transition(State.LIVE)
+        # Best effort: nothing below may turn into ERROR.
         await self._best_effort("open_comments", self.fb.open_comments(live_id))
         await self._best_effort("capture.start", self.capture.start(live_id, stream_dir))
         await self._best_effort("park_dashboard", self.fb.park_dashboard())
-        self._transition(State.LIVE)
 
     @staticmethod
     async def _best_effort(name: str, aw: Awaitable[object]) -> None:
@@ -628,9 +665,13 @@ class Controller:
         await self._best_effort("capture.stop", self.capture.stop())
         self._write_report()
 
-        if power_off:
+        # Branch point (synchronous with the flag check, so a PowerPress either
+        # sets the flag before it or is handled as a plain shutdown after it).
+        if power_off or self._power_after_end:
+            self._end_mode = "power"
             await self._power_steps()
             return
+        self._end_mode = None
         self.live_id = None
         self.stream_dir = None
         await self._setup_flow("LOGIN")
@@ -648,6 +689,7 @@ class Controller:
             log.exception("cannot write report")
 
     async def _shutdown_flow(self) -> None:
+        self._end_mode = "power"
         await self._power_steps()
 
     async def _power_steps(self) -> None:
@@ -674,7 +716,7 @@ class Controller:
             log.warning("no camera %r configured", cam)
             return
         try:
-            await self.obs.set_scene(cfg.scene)
+            await self._bounded("set_scene", self.obs.set_scene(cfg.scene))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -682,7 +724,9 @@ class Controller:
             return
         self._active_camera = cam
         try:
-            await self.camera.set_autofocus(cfg.device, True)
+            await self._bounded(
+                "set_autofocus", self.camera.set_autofocus(cfg.device, True)
+            )
             self._autofocus[cam] = True
         except asyncio.CancelledError:
             raise
@@ -701,7 +745,9 @@ class Controller:
             return
         want = not self._autofocus.get(cam, False)
         try:
-            await self.camera.set_autofocus(cfg.device, want)
+            await self._bounded(
+                "set_autofocus", self.camera.set_autofocus(cfg.device, want)
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -714,7 +760,7 @@ class Controller:
 
     async def _camera_from_scene(self) -> str:
         try:
-            scene = await self.obs.current_scene()
+            scene = await self._bounded("current_scene", self.obs.current_scene())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
