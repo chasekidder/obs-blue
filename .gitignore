@@ -9,3 +9,6 @@ cosign.private
 orig_scripts/
 # Site-specific install config (password hash, Facebook IDs, SSN session)
 site/
+stream-pilot/.venv/
+**/__pycache__/
+.pytest_cache/
