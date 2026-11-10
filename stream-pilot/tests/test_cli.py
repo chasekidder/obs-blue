@@ -18,11 +18,9 @@ def test_help_exits_zero(capsys):
         assert cmd in out
 
 
-def test_subcommands_not_implemented_yet(capsys):
-    for argv in (["run", "--dry-run"], ["status"], ["retry"],
-                 ["health", "--timeout", "5"]):
-        assert main(argv) == 2
-        assert "not implemented" in capsys.readouterr().out
+def test_run_not_implemented_yet(capsys):
+    assert main(["run", "--dry-run"]) == 2
+    assert "not implemented" in capsys.readouterr().out
 
 
 @pytest.fixture
@@ -91,3 +89,89 @@ def test_chromium_prep_cli_errors_exit_0(home, monkeypatch, caplog):
     monkeypatch.setattr(cli, "prep_chromium_profile", boom)
     assert main(["chromium-prep"]) == 0
     assert "disk" in caplog.text
+
+
+# --- status / health / retry ---------------------------------------------
+
+def write_status_file(home, **overrides):
+    import time
+    state_dir = home / ".local" / "state" / "stream-pilot"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    data = {"state": "LIVE", "since": now - 90, "last_error": None,
+            "live_id": "777", "memory": {"mem_available_mb": 1234},
+            "updated_at": now}
+    data.update(overrides)
+    (state_dir / "status.json").write_text(json.dumps(data))
+
+
+def test_status_cli_prints_formatted_status(home, capsys):
+    write_status_file(home)
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "state: LIVE" in out
+    assert "live id: 777" in out
+    assert "mem available: 1234 MB" in out
+
+
+def test_status_cli_no_file_exits_1(home, capsys):
+    assert main(["status"]) == 1
+    assert "status.json" in capsys.readouterr().err
+
+
+def test_status_cli_corrupt_file_exits_1(home, capsys):
+    write_status_file(home)
+    (home / ".local/state/stream-pilot/status.json").write_text("{oops")
+    assert main(["status"]) == 1
+    assert capsys.readouterr().err
+
+
+def test_health_cli_healthy_exits_0(home):
+    write_status_file(home, state="READY")
+    assert main(["health", "--timeout", "0"]) == 0
+
+
+def test_health_cli_missing_exits_1(home, capsys):
+    assert main(["health", "--timeout", "0"]) == 1
+    assert "missing" in capsys.readouterr().err
+
+
+def test_health_cli_starting_exits_1(home):
+    write_status_file(home, state="STARTING")
+    assert main(["health", "--timeout", "0"]) == 1
+
+
+def test_retry_cli_sends_sigusr1_via_injected_runner(home, monkeypatch):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        return 0
+
+    monkeypatch.setattr(cli, "_run_command", fake_runner)
+    assert main(["retry"]) == 0
+    assert calls == [["systemctl", "--user", "kill", "-s", "SIGUSR1",
+                      "stream-pilot.service"]]
+
+
+def test_retry_cli_propagates_exit_code(home, monkeypatch):
+    monkeypatch.setattr(cli, "_run_command", lambda argv: 5)
+    assert main(["retry"]) == 5
+
+
+def test_retry_cli_missing_systemctl_exits_1(home, monkeypatch, capsys):
+    def boom(argv):
+        raise FileNotFoundError("systemctl")
+
+    monkeypatch.setattr(cli, "_run_command", boom)
+    assert main(["retry"]) == 1
+    assert "systemctl" in capsys.readouterr().err
+
+
+def test_health_cli_config_error_exits_1(home, monkeypatch, capsys):
+    def boom():
+        raise ValueError("bad toml")
+
+    monkeypatch.setattr(cli, "_load_config", boom)
+    assert main(["health", "--timeout", "0"]) == 1
+    assert "bad toml" in capsys.readouterr().err

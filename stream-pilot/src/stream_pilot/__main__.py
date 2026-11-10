@@ -1,19 +1,23 @@
 """stream-pilot command-line entry point.
 
-Each subcommand dispatches to one small ``cmd_*`` function. Later tasks
-replace those handlers; until then they report ``not implemented`` and
-return exit code 2.
+Each subcommand dispatches to one small ``cmd_*`` function. ``run`` is
+wired up in a later task; until then it reports ``not implemented`` and
+returns exit code 2.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from .chromium_prep import prep_chromium_profile
 from .config import Config, load_config
+from .health import check_health, format_status
 from .seed_obs import seed_obs
 
 log = logging.getLogger("stream_pilot")
@@ -44,16 +48,52 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _not_implemented(args)
 
 
-def cmd_status(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+def _status_path() -> Path:
+    return _load_config().paths.state_dir / "status.json"
 
 
-def cmd_retry(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+def cmd_status(_args: argparse.Namespace) -> int:
+    path = _status_path()
+    try:
+        status = json.loads(path.read_text())
+    except FileNotFoundError:
+        print(f"no status file at {path} (is stream-pilot running?)", file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        print(f"cannot read status file {path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(status, dict):
+        print(f"status file {path} is not a JSON object", file=sys.stderr)
+        return 1
+    print(format_status(status))
+    return 0
+
+
+def _run_command(argv: list[str]) -> int:
+    """Run a command and return its exit code (monkeypatched in tests)."""
+    return subprocess.run(argv, check=False).returncode
+
+
+def cmd_retry(_args: argparse.Namespace) -> int:
+    try:
+        return _run_command(
+            ["systemctl", "--user", "kill", "-s", "SIGUSR1", "stream-pilot.service"]
+        )
+    except OSError as exc:
+        print(f"retry failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_health(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+    # Run by greenboot: any failure here (even a config error) must be a
+    # clean "unhealthy" exit code rather than a traceback.
+    try:
+        path = _status_path()
+    except Exception as exc:
+        print(f"stream-pilot health: UNHEALTHY: cannot load config: {exc}",
+              file=sys.stderr)
+        return 1
+    return check_health(path, args.timeout)
 
 
 def cmd_seed_obs(_args: argparse.Namespace) -> int:
