@@ -74,6 +74,86 @@ def test_seed_obs_cli_other_errors_exit_0(home, monkeypatch, caplog):
     assert "denied" in caplog.text
 
 
+def make_scenes_defaults(root):
+    d = root / "defaults"
+    (d / "basic" / "scenes").mkdir(parents=True)
+    (d / "basic" / "scenes" / "s.json").write_text(
+        '{"a": "@MAIN_CAMERA_DEVICE@", "b": "@JEWELRY_CAMERA_DEVICE@",'
+        ' "m": "@MICROPHONE_DEVICE@"}')
+    return d
+
+
+def test_seed_obs_help_describes_reset_scenes(capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["seed-obs", "--help"])
+    assert e.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--reset-scenes" in out
+    assert ("re-apply camera/microphone IDs from site.toml (backs up the current "
+            "scene collection); stop OBS first") in out
+
+
+def test_seed_obs_cli_substitutes_microphone_on_first_seed(home, monkeypatch):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_scenes_defaults(home))
+    assert main(["seed-obs"]) == 0
+    scene = json.loads((home / ".config/obs-studio/basic/scenes/s.json").read_text())
+    assert scene["m"] == "alsa_input.usb-0c76_USB_PnP_Audio_Device-00.mono-fallback"
+
+
+def test_seed_obs_cli_reset_scenes_applies_new_site_values(home, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_scenes_defaults(home))
+    assert main(["seed-obs"]) == 0
+    sec = home / ".config" / "stream-pilot" / "secrets.toml"
+    pw = tomllib.loads(sec.read_text())["obs"]["password"]
+    site = home / ".config" / "stream-pilot" / "site.toml"
+    site.write_text(
+        '[cameras.main]\ndevice = "/dev/video20"\n'
+        '[cameras.jewelry]\ndevice = "/dev/video22"\n'
+        '[audio]\nmic_device = "alsa_input.site-mic"\n')
+    capsys.readouterr()
+    assert main(["seed-obs"]) == 0  # plain seed: one-time, nothing changes
+    scenes = home / ".config/obs-studio/basic/scenes"
+    assert json.loads((scenes / "s.json").read_text())["a"] == "/dev/video0"
+    assert main(["seed-obs", "--reset-scenes"]) == 0
+    assert json.loads((scenes / "s.json").read_text()) == {
+        "a": "/dev/video20", "b": "/dev/video22", "m": "alsa_input.site-mic"}
+    backups = list(scenes.glob("s.json.bak-*"))
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text())["a"] == "/dev/video0"
+    assert backups[0].name in capsys.readouterr().out
+    # the normal seed work (websocket config, password) still happens
+    ws = json.loads(
+        (home / ".config/obs-studio/plugin_config/obs-websocket/config.json").read_text())
+    assert ws["server_password"] == pw
+
+
+def test_seed_obs_cli_reset_scenes_missing_defaults_exits_1(home, monkeypatch):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_scenes_defaults(home))
+    assert main(["seed-obs"]) == 0
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", home / "nope")
+    assert main(["seed-obs", "--reset-scenes"]) == 1
+
+
+def test_seed_obs_cli_reset_scenes_other_errors_exit_0(home, monkeypatch):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_scenes_defaults(home))
+
+    def boom(*a, **k):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(cli, "reset_scenes", boom)
+    assert main(["seed-obs", "--reset-scenes"]) == 0
+
+
+def test_seed_obs_cli_without_flag_does_not_reset(home, monkeypatch):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_scenes_defaults(home))
+
+    def boom(*a, **k):
+        raise AssertionError("reset_scenes must not run without the flag")
+
+    monkeypatch.setattr(cli, "reset_scenes", boom)
+    assert main(["seed-obs"]) == 0
+
+
 def test_chromium_prep_cli_creates_dir_and_fixes_prefs(home, tmp_path):
     udd = home / ".local" / "share" / "stream-pilot" / "chromium"
     assert main(["chromium-prep"]) == 0

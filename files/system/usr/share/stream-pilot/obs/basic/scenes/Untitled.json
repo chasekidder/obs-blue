@@ -8,7 +8,7 @@
             "id": "pulse_input_capture",
             "versioned_id": "pulse_input_capture",
             "settings": {
-                "device_id": "alsa_input.usb-0c76_USB_PnP_Audio_Device-00.mono-fallback"
+                "device_id": "@MICROPHONE_DEVICE@"
             },
             "mixers": 255,
             "sync": 0,

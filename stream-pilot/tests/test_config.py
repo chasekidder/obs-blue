@@ -24,6 +24,9 @@ def test_defaults_only(tmp_path, monkeypatch):
     assert cfg.deck.brightness == 70
     assert cfg.timeouts.attempts == 3
     assert cfg.timeouts.step_s == 30
+    assert cfg.audio.mic_device == (
+        "alsa_input.usb-0c76_USB_PnP_Audio_Device-00.mono-fallback"
+    )
 
 
 def test_site_file_merges_keeping_other_keys(tmp_path, monkeypatch):
@@ -171,3 +174,16 @@ def test_non_table_section_falls_back_to_defaults(tmp_path, monkeypatch, caplog)
         cfg = load_config([site])
     assert cfg.obs.port == 4455
     assert "obs" in caplog.text
+
+
+def test_audio_mic_device_override_and_unknown_key(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    site = tmp_path / "site.toml"
+    site.write_text('[audio]\nmic_device = "alsa_input.new"\ngain = 3\n')
+    with caplog.at_level(logging.WARNING, logger="stream_pilot.config"):
+        cfg = load_config([site])
+    assert cfg.audio.mic_device == "alsa_input.new"
+    assert "audio.gain" in caplog.text
+    import dataclasses
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cfg.audio.mic_device = "x"  # type: ignore[misc]

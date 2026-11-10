@@ -1,16 +1,18 @@
 import json
 import stat
 import tomllib
+from datetime import datetime
 
 import pytest
 
-from stream_pilot.config import CameraCfg
-from stream_pilot.seed_obs import seed_obs
+from stream_pilot.config import AudioCfg, CameraCfg
+from stream_pilot.seed_obs import reset_scenes, seed_obs
 
 CAMS = {
     "main": CameraCfg(scene="Main Camera", device="/dev/v4l/by-id/usb-Main_Cam-video-index0"),
     "jewelry": CameraCfg(scene="Jewlery Camera", device="/dev/video2"),
 }
+AUDIO = AudioCfg(mic_device="alsa_input.usb-Mic_One-00.mono-fallback")
 
 
 @pytest.fixture
@@ -19,7 +21,8 @@ def defaults(tmp_path):
     (d / "basic" / "scenes").mkdir(parents=True)
     (d / "basic" / "scenes" / "Untitled.json").write_text(
         json.dumps({"main": "@MAIN_CAMERA_DEVICE@", "jew": "@JEWELRY_CAMERA_DEVICE@",
-                    "again": "@MAIN_CAMERA_DEVICE@"})
+                    "again": "@MAIN_CAMERA_DEVICE@",
+                    "mic": "@MICROPHONE_DEVICE@"})
     )
     (d / "basic" / "profiles").mkdir()
     (d / "basic" / "profiles" / "p.ini").write_text("[General]\n")
@@ -45,7 +48,7 @@ def test_first_seed_copies_and_substitutes(tmp_path, defaults):
     assert seed_obs(defaults, cfg, sec, CAMS) is True
     scene = json.loads((cfg / "basic" / "scenes" / "Untitled.json").read_text())
     assert scene == {"main": CAMS["main"].device, "jew": "/dev/video2",
-                     "again": CAMS["main"].device}
+                     "again": CAMS["main"].device, "mic": "@MICROPHONE_DEVICE@"}
     assert (cfg / "basic" / "profiles" / "p.ini").exists()
     # defaults untouched
     assert "@MAIN_CAMERA_DEVICE@" in (defaults / "basic/scenes/Untitled.json").read_text()
@@ -152,3 +155,90 @@ def test_no_temp_files_left(tmp_path, defaults):
     assert [p.name for p in sec.parent.iterdir()] == ["secrets.toml"]
     ws_dir = cfg / "plugin_config" / "obs-websocket"
     assert [p.name for p in ws_dir.iterdir()] == ["config.json"]
+
+
+def test_first_seed_substitutes_microphone(tmp_path, defaults):
+    cfg, sec = paths(tmp_path)
+    assert seed_obs(defaults, cfg, sec, CAMS, audio=AUDIO) is True
+    scene = json.loads((cfg / "basic" / "scenes" / "Untitled.json").read_text())
+    assert scene["mic"] == AUDIO.mic_device
+    assert scene["main"] == CAMS["main"].device
+
+
+def test_microphone_value_is_json_escaped(tmp_path, defaults):
+    cfg, sec = paths(tmp_path)
+    weird = AudioCfg(mic_device='dev"with\\quote')
+    seed_obs(defaults, cfg, sec, CAMS, audio=weird)
+    scene = json.loads((cfg / "basic" / "scenes" / "Untitled.json").read_text())
+    assert scene["mic"] == 'dev"with\\quote'
+
+
+# --- reset_scenes ----------------------------------------------------------
+
+NEW_CAMS = {
+    "main": CameraCfg(scene="Main Camera", device="/dev/video10"),
+    "jewelry": CameraCfg(scene="Jewlery Camera", device="/dev/video12"),
+}
+NEW_AUDIO = AudioCfg(mic_device="alsa_input.new-mic")
+NOW = datetime(2026, 11, 9, 20, 15, 30)
+
+
+def seeded(tmp_path, defaults):
+    cfg, sec = paths(tmp_path)
+    seed_obs(defaults, cfg, sec, CAMS, audio=AUDIO)
+    return cfg
+
+
+def test_reset_scenes_backs_up_and_substitutes_new_values(tmp_path, defaults):
+    cfg = seeded(tmp_path, defaults)
+    scenes = cfg / "basic" / "scenes"
+    old = (scenes / "Untitled.json").read_text()
+    (scenes / "Other.json").write_text('{"user": "scene"}')
+    (scenes / "Untitled.json.bak").write_text("obs own backup")
+    result = reset_scenes(defaults, cfg, NEW_CAMS, NEW_AUDIO, now=NOW)
+    assert result is not None and result.name == "20261109-201530"
+    assert (scenes / "Untitled.json.bak-20261109-201530").read_text() == old
+    assert (scenes / "Other.json.bak-20261109-201530").read_text() == '{"user": "scene"}'
+    # OBS' own .bak and earlier backups are not re-backed-up
+    assert not (scenes / "Untitled.json.bak.bak-20261109-201530").exists()
+    new = json.loads((scenes / "Untitled.json").read_text())
+    assert new == {"main": "/dev/video10", "jew": "/dev/video12",
+                   "again": "/dev/video10", "mic": "alsa_input.new-mic"}
+    # user scene not in defaults is backed up but left in place
+    assert (scenes / "Other.json").read_text() == '{"user": "scene"}'
+    # defaults untouched
+    assert "@MICROPHONE_DEVICE@" in (defaults / "basic/scenes/Untitled.json").read_text()
+
+
+def test_reset_scenes_leaves_rest_of_config_alone(tmp_path, defaults):
+    cfg = seeded(tmp_path, defaults)
+    (cfg / "basic" / "profiles" / "p.ini").write_text("[General]\nedited=1\n")
+    reset_scenes(defaults, cfg, NEW_CAMS, NEW_AUDIO, now=NOW)
+    assert (cfg / "basic" / "profiles" / "p.ini").read_text() == "[General]\nedited=1\n"
+
+
+def test_reset_scenes_nothing_to_back_up_returns_none(tmp_path, defaults):
+    cfg = tmp_path / "home" / "obs-studio"
+    cfg.mkdir(parents=True)
+    assert reset_scenes(defaults, cfg, NEW_CAMS, NEW_AUDIO, now=NOW) is None
+    scene = json.loads((cfg / "basic" / "scenes" / "Untitled.json").read_text())
+    assert scene["mic"] == "alsa_input.new-mic"
+
+
+def test_reset_scenes_same_second_does_not_overwrite_backup(tmp_path, defaults):
+    cfg = seeded(tmp_path, defaults)
+    scenes = cfg / "basic" / "scenes"
+    first = (scenes / "Untitled.json").read_text()
+    reset_scenes(defaults, cfg, NEW_CAMS, NEW_AUDIO, now=NOW)
+    reset_scenes(defaults, cfg, CAMS, AUDIO, now=NOW)
+    assert (scenes / "Untitled.json.bak-20261109-201530").read_text() == first
+    assert len(list(scenes.glob("Untitled.json.bak-*"))) == 2
+
+
+def test_reset_scenes_missing_defaults_raises_and_keeps_scenes(tmp_path, defaults):
+    cfg = seeded(tmp_path, defaults)
+    before = (cfg / "basic" / "scenes" / "Untitled.json").read_text()
+    with pytest.raises(FileNotFoundError):
+        reset_scenes(tmp_path / "nope", cfg, NEW_CAMS, NEW_AUDIO, now=NOW)
+    assert (cfg / "basic" / "scenes" / "Untitled.json").read_text() == before
+    assert not list((cfg / "basic" / "scenes").glob("*.bak-*"))

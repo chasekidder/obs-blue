@@ -18,7 +18,7 @@ from .app import run_app
 from .chromium_prep import prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
-from .seed_obs import seed_obs
+from .seed_obs import reset_scenes, seed_obs
 
 log = logging.getLogger("stream_pilot")
 
@@ -97,16 +97,30 @@ def cmd_health(args: argparse.Namespace) -> int:
     return check_health(path, args.timeout)
 
 
-def cmd_seed_obs(_args: argparse.Namespace) -> int:
-    """ExecStartPre for obs.service: must never block OBS except on a broken image."""
+def cmd_seed_obs(args: argparse.Namespace) -> int:
+    """ExecStartPre for obs.service: must never block OBS except on a broken image.
+
+    With ``--reset-scenes`` (run by hand, OBS stopped) also re-applies the
+    camera/microphone IDs from the config to the scene collection.
+    """
     try:
         cfg = _load_config()
+        config_dir = Path("~/.config/obs-studio").expanduser()
         seed_obs(
             OBS_DEFAULTS_DIR,
-            Path("~/.config/obs-studio").expanduser(),
+            config_dir,
             Path("~/.config/stream-pilot/secrets.toml").expanduser(),
             cfg.cameras,
+            audio=cfg.audio,
         )
+        if getattr(args, "reset_scenes", False):
+            stamp = reset_scenes(OBS_DEFAULTS_DIR, config_dir, cfg.cameras, cfg.audio)
+            if stamp is None:
+                print("reset-scenes: no existing scenes to back up")
+            else:
+                for backup in sorted(stamp.parent.glob(f"*.bak-{stamp.name}")):
+                    print(f"reset-scenes: backed up {backup}")
+            print("reset-scenes: scene collection re-applied from the defaults")
     except FileNotFoundError as exc:
         log.error("seed-obs: %s", exc)
         return 1
@@ -151,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="do everything up to, but not including, clicking Go live",
+    )
+    parsers["seed-obs"].add_argument(
+        "--reset-scenes",
+        action="store_true",
+        help="re-apply camera/microphone IDs from site.toml (backs up the "
+        "current scene collection); stop OBS first",
     )
     parsers["health"].add_argument(
         "--timeout",

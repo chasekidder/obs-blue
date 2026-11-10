@@ -67,6 +67,11 @@ class CameraCfg:
 
 
 @dataclass(frozen=True)
+class AudioCfg:
+    mic_device: str
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -106,6 +111,7 @@ class Config:
     cdp: CdpCfg
     ssn: SsnCfg
     cameras: dict[str, CameraCfg]
+    audio: AudioCfg
     memory: MemoryCfg
     deck: DeckCfg
     timeouts: TimeoutsCfg
@@ -191,6 +197,7 @@ def load_config(paths: list[Path]) -> Config:
         "obs": ObsCfg,
         "cdp": CdpCfg,
         "ssn": SsnCfg,
+        "audio": AudioCfg,
         "memory": MemoryCfg,
         "deck": DeckCfg,
         "timeouts": TimeoutsCfg,

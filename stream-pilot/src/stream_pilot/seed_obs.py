@@ -3,9 +3,11 @@
 Runs as ``obs.service`` ExecStartPre on every OBS start:
 
 * first run (no ``config_dir``): copy the packaged default profile/scenes and
-  substitute the camera device placeholders;
+  substitute the camera/microphone device placeholders;
 * every run: make sure ``secrets.toml`` holds ``[obs] password`` (generated
   once, mode 0600) and write obs-websocket's ``config.json`` with it.
+* :func:`reset_scenes` (``seed-obs --reset-scenes``) re-applies the device IDs
+  from the current config to an already-seeded scene collection.
 """
 
 from __future__ import annotations
@@ -18,16 +20,18 @@ import secrets
 import shutil
 import tempfile
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ._atomic import atomic_write_text
-from .config import CameraCfg
+from .config import AudioCfg, CameraCfg
 
 log = logging.getLogger(__name__)
 
 MAIN_PLACEHOLDER = "@MAIN_CAMERA_DEVICE@"
 JEWELRY_PLACEHOLDER = "@JEWELRY_CAMERA_DEVICE@"
+MICROPHONE_PLACEHOLDER = "@MICROPHONE_DEVICE@"
 WEBSOCKET_PORT = 4455
 
 
@@ -36,8 +40,12 @@ def seed_obs(
     config_dir: Path,
     secrets_path: Path,
     cameras: dict[str, CameraCfg],
+    audio: AudioCfg | None = None,
 ) -> bool:
     """Seed OBS; return True if the defaults were copied this run.
+
+    ``audio`` supplies the microphone device; if ``None`` the
+    ``@MICROPHONE_DEVICE@`` placeholder is left as is.
 
     Raises ``FileNotFoundError`` if the defaults are needed (``config_dir``
     does not exist yet) but ``defaults_dir`` is missing.
@@ -49,7 +57,7 @@ def seed_obs(
     )
     copied = False
     if not config_dir.exists():
-        _copy_defaults(defaults_dir, config_dir, cameras)
+        _copy_defaults(defaults_dir, config_dir, cameras, audio)
         copied = True
 
     password = _ensure_password(secrets_path)
@@ -57,15 +65,78 @@ def seed_obs(
     return copied
 
 
-def _copy_defaults(
-    defaults_dir: Path, config_dir: Path, cameras: dict[str, CameraCfg]
-) -> None:
-    if not defaults_dir.is_dir():
-        raise FileNotFoundError(f"OBS defaults directory not found: {defaults_dir}")
-    replacements = {
+def _replacements(
+    cameras: dict[str, CameraCfg], audio: AudioCfg | None
+) -> dict[str, str]:
+    out = {
         MAIN_PLACEHOLDER: _json_escape(cameras["main"].device),
         JEWELRY_PLACEHOLDER: _json_escape(cameras["jewelry"].device),
     }
+    if audio is not None:
+        out[MICROPHONE_PLACEHOLDER] = _json_escape(audio.mic_device)
+    return out
+
+
+def _check_defaults(defaults_dir: Path) -> None:
+    if not defaults_dir.is_dir():
+        raise FileNotFoundError(f"OBS defaults directory not found: {defaults_dir}")
+
+
+def reset_scenes(
+    defaults_dir: Path,
+    config_dir: Path,
+    cameras: dict[str, CameraCfg],
+    audio: AudioCfg | None,
+    *,
+    now: datetime | None = None,
+) -> Path | None:
+    """Re-apply the packaged scene collection with the current device IDs.
+
+    Every existing ``config_dir/basic/scenes/*.json`` is first copied to
+    ``<name>.bak-<YYYYmmdd-HHMMSS>`` (same directory; a ``-N`` suffix is added
+    to the stamp if that backup name is already taken), then the defaults'
+    scenes are copied over with all placeholders substituted. Nothing else in
+    ``config_dir`` is touched. OBS should be stopped first: it rewrites its
+    scene files on exit.
+
+    Returns ``<scenes dir>/<stamp>`` (its ``name`` is the backup stamp, i.e.
+    the files are ``*.bak-<stamp>``), or ``None`` if there was nothing to back
+    up. Raises ``FileNotFoundError`` (before touching anything) if
+    ``defaults_dir`` is missing.
+    """
+    defaults_dir, config_dir = Path(defaults_dir), Path(config_dir)
+    _check_defaults(defaults_dir)
+    replacements = _replacements(cameras, audio)
+    scenes_dir = config_dir / "basic" / "scenes"
+
+    existing = sorted(scenes_dir.glob("*.json")) if scenes_dir.is_dir() else []
+    stamp = None
+    if existing:
+        base = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+        stamp, n = base, 0
+        while any(f.with_name(f"{f.name}.bak-{stamp}").exists() for f in existing):
+            n += 1
+            stamp = f"{base}-{n}"
+        for f in existing:
+            shutil.copy2(f, f.with_name(f"{f.name}.bak-{stamp}"))
+
+    scenes_dir.mkdir(parents=True, exist_ok=True)
+    for src in sorted((defaults_dir / "basic" / "scenes").glob("*.json")):
+        text = src.read_text(encoding="utf-8")
+        for placeholder, value in replacements.items():
+            text = text.replace(placeholder, value)
+        atomic_write_text(scenes_dir / src.name, text, 0o644)
+    return scenes_dir / stamp if stamp else None
+
+
+def _copy_defaults(
+    defaults_dir: Path,
+    config_dir: Path,
+    cameras: dict[str, CameraCfg],
+    audio: AudioCfg | None,
+) -> None:
+    _check_defaults(defaults_dir)
+    replacements = _replacements(cameras, audio)
     config_dir.parent.mkdir(parents=True, exist_ok=True)
     # Build in a sibling temp dir and rename, so an interrupted copy never
     # leaves a half-seeded config_dir that would be mistaken for a user's.

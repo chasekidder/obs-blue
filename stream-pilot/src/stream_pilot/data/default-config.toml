@@ -27,6 +27,10 @@ device = "/dev/video0"
 scene = "Jewlery Camera"
 device = "/dev/video2"
 
+[audio]
+# PulseAudio/PipeWire source name (`pactl list short sources`).
+mic_device = "alsa_input.usb-0c76_USB_PnP_Audio_Device-00.mono-fallback"
+
 [memory]
 interval_s = 60
 floor_mb = 600
