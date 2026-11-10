@@ -18,6 +18,7 @@ import inspect
 import logging
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -36,6 +37,10 @@ log = logging.getLogger(__name__)
 
 TICK_INTERVAL_S = 15
 _DECK_STOP_TIMEOUT_S = 5
+# Keep-alive backoff for background tasks (module constants so tests can shrink them).
+BACKOFF_INITIAL_S = 1.0
+BACKOFF_MAX_S = 60.0
+BACKOFF_RESET_AFTER_S = 60.0
 
 
 def _not_wired() -> StepFailed:
@@ -104,6 +109,38 @@ async def _ticker(
         controller.sink(Tick())
 
 
+async def _supervised(
+    name: str,
+    factory: Callable[[], Awaitable[None]],
+    *,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Keep a background task alive: restart it after an unexpected exception.
+
+    A missing Stream Deck or evdev must never take the stream controller down.
+    Backoff doubles from BACKOFF_INITIAL_S up to BACKOFF_MAX_S and resets once an
+    attempt has run for longer than BACKOFF_RESET_AFTER_S. A normal return ends
+    the supervisor (``deck.start()`` spawns its own task and returns).
+    Cancellation propagates, including during the backoff sleep.
+    """
+    backoff = BACKOFF_INITIAL_S
+    while True:
+        started = clock()
+        try:
+            await factory()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("background task %s died; restarting in %.1fs", name, backoff)
+        else:
+            return
+        if clock() - started > BACKOFF_RESET_AFTER_S:
+            backoff = BACKOFF_INITIAL_S
+        await (sleep or asyncio.sleep)(backoff)
+        backoff = min(backoff * 2, BACKOFF_MAX_S)
+
+
 def build_app(
     cfg: Config,
     *,
@@ -136,29 +173,30 @@ def build_app(
     guard = MemoryGuard(cfg.memory, deck, controller.note_memory)
 
     background: list[Awaitable] = [
-        deck.start(),
-        power.start(),
-        guard.run(),
-        _ticker(controller),
+        _supervised("deck", lambda: deck.start()),
+        _supervised("power", lambda: power.start()),
+        _supervised("memory", lambda: guard.run()),
+        _supervised("ticker", lambda: _ticker(controller)),
     ]
     return controller, background
 
 
-async def _supervise(
-    aw: Awaitable, name: str, failures: list[str], cancel_all: Callable[[], None]
+async def _run_controller(
+    controller: Controller, failures: list[str], cancel_all: Callable[[], None]
 ) -> None:
+    """The controller is the only fatal task: if it dies, exit non-zero (systemd restarts us)."""
     try:
-        await aw
+        await controller.run()
     except asyncio.CancelledError:
         raise
     except Exception:
-        log.exception("task %s died unexpectedly", name)
-        failures.append(name)
+        log.exception("controller died unexpectedly")
+        failures.append("controller")
         cancel_all()
 
 
 async def run_app(cfg: Config, dry_run: bool) -> int:
-    """Run the controller until SIGTERM/SIGINT (exit 0) or a task crash (exit 1)."""
+    """Run the controller until SIGTERM/SIGINT (exit 0) or a controller crash (exit 1)."""
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
@@ -168,7 +206,6 @@ async def run_app(cfg: Config, dry_run: bool) -> int:
     loop = asyncio.get_running_loop()
     failures: list[str] = []
     tasks: list[asyncio.Task] = []
-    named: list[tuple[str, Awaitable]] = []
 
     def cancel_all() -> None:
         for t in tasks:
@@ -188,18 +225,17 @@ async def run_app(cfg: Config, dry_run: bool) -> int:
             loop.add_signal_handler(sig, on_stop_signal, sig.name)
             installed.append(sig)
 
-        named.append(("controller", controller.run()))
-        named += [(f"background-{i}", aw) for i, aw in enumerate(background)]
-        for name, aw in named:
-            tasks.append(
-                loop.create_task(
-                    _supervise(aw, name, failures, cancel_all), name=name
-                )
+        tasks.append(
+            loop.create_task(
+                _run_controller(controller, failures, cancel_all), name="controller"
             )
+        )
+        for i, aw in enumerate(background):
+            tasks.append(loop.create_task(aw, name=f"background-{i}"))
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         # A task cancelled before its first step never awaited its coroutine.
-        for _name, aw in named:
+        for aw in background:
             if inspect.iscoroutine(aw) and inspect.getcoroutinestate(aw) == inspect.CORO_CREATED:
                 aw.close()
         for sig in installed:

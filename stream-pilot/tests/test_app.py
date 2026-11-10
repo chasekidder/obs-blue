@@ -5,6 +5,7 @@ device, connects to OBS or runs systemctl.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -206,6 +207,160 @@ async def test_ticker_sends_tick_every_15_seconds():
     assert sent == [Tick(), Tick()]
 
 
+# --------------------------------------------------------------- _supervised
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+async def test_supervised_restarts_with_exponential_backoff_capped_at_60():
+    clock = Clock()
+    sleeps = []
+    runs = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 9:
+            raise asyncio.CancelledError
+
+    async def crash():
+        runs.append(1)
+        raise OSError("no hid")
+
+    with pytest.raises(asyncio.CancelledError):
+        await app._supervised("deck", crash, sleep=fake_sleep, clock=clock)
+    assert sleeps == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+    assert len(runs) == 9
+
+
+async def test_supervised_resets_backoff_after_running_over_60_seconds():
+    clock = Clock()
+    sleeps = []
+    durations = iter([0, 0, 0, 61, 0, 0])  # how long each run "lasted"
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 6:
+            raise asyncio.CancelledError
+
+    async def crash():
+        clock.now += next(durations)
+        raise OSError("x")
+
+    with pytest.raises(asyncio.CancelledError):
+        await app._supervised("deck", crash, sleep=fake_sleep, clock=clock)
+    # 4th run lasted > 60 s: its backoff restarts from 1 s
+    assert sleeps == [1, 2, 4, 1, 2, 4]
+
+
+async def test_supervised_exactly_60_seconds_does_not_reset():
+    clock = Clock()
+    sleeps = []
+    durations = iter([0, 60, 0])
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) == 3:
+            raise asyncio.CancelledError
+
+    async def crash():
+        clock.now += next(durations)
+        raise OSError("x")
+
+    with pytest.raises(asyncio.CancelledError):
+        await app._supervised("deck", crash, sleep=fake_sleep, clock=clock)
+    assert sleeps == [1, 2, 4]
+
+
+async def test_supervised_propagates_cancellation_without_restart():
+    runs = []
+
+    async def blocks():
+        runs.append(1)
+        await asyncio.Event().wait()
+
+    task = asyncio.ensure_future(app._supervised("x", blocks))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert runs == [1]
+
+
+async def test_supervised_cancel_during_backoff_propagates():
+    async def crash():
+        raise OSError("x")
+
+    task = asyncio.ensure_future(app._supervised("x", crash))  # real 1 s backoff
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_supervised_normal_return_is_not_restarted():
+    runs = []
+
+    async def returns():
+        runs.append(1)
+
+    await app._supervised("deck", returns)
+    assert runs == [1]
+
+
+async def test_supervised_logs_traceback_at_error_level(caplog):
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        raise asyncio.CancelledError
+
+    async def crash():
+        raise ImportError("no evdev")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(asyncio.CancelledError):
+            await app._supervised("power", crash, sleep=fake_sleep)
+    rec = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert rec and rec[0].exc_info
+    assert "power" in rec[0].getMessage()
+
+
+async def test_build_app_background_awaitables_restart_crashing_adapters(
+    cfg, adapters, monkeypatch
+):
+    monkeypatch.setattr(app, "BACKOFF_INITIAL_S", 0.001)
+    monkeypatch.setattr(app, "BACKOFF_MAX_S", 0.004)
+    power = FakePower()
+    monkeypatch.setattr(app, "PowerKeyListener", lambda: power)
+    attempts = []
+    running = asyncio.Event()
+
+    async def start():
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise ImportError("No module named 'evdev'")
+        running.set()
+        await asyncio.Event().wait()
+
+    power.start = start
+    controller, coros = app.build_app(cfg, dry_run=False)
+    assert len(coros) == 4
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        await asyncio.wait_for(running.wait(), 2)
+        assert len(attempts) == 3
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 # ----------------------------------------------------------------- NotWired
 
 
@@ -256,7 +411,8 @@ def restore_signals():
 
 
 class FakeController:
-    def __init__(self, *, run_exc=None):
+    def __init__(self, *, run_exc=None, run_delay=0):
+        self.run_delay = run_delay
         self.events: list = []
         self.started = asyncio.Event()
         self.cancelled = False
@@ -269,6 +425,7 @@ class FakeController:
     async def run(self) -> None:
         self.started.set()
         if self.run_exc is not None:
+            await asyncio.sleep(self.run_delay)
             raise self.run_exc
         try:
             await asyncio.Event().wait()
@@ -289,23 +446,39 @@ def patch_build(monkeypatch, controller, extra=()):
     return fake_build
 
 
+@contextlib.asynccontextmanager
+async def running_app(cfg, controller, dry_run=False):
+    """Run ``run_app`` as a task; always shuts it down (SIGTERM) on exit.
+
+    Guarantees a failing assertion cannot leak signal handlers or a live task.
+    """
+    task = asyncio.ensure_future(app.run_app(cfg, dry_run))
+    try:
+        await asyncio.wait_for(controller.started.wait(), 2)
+        yield task
+    finally:
+        if not task.done():
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+            finally:
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
+
+
 async def test_run_app_sigusr1_enqueues_retry_and_sigterm_exits_zero(
     cfg, monkeypatch, restore_signals
 ):
     controller = FakeController()
     build = patch_build(monkeypatch, controller)
-    task = asyncio.ensure_future(app.run_app(cfg, True))
-    await asyncio.wait_for(controller.started.wait(), 2)
+    async with running_app(cfg, controller, dry_run=True) as task:
+        os.kill(os.getpid(), signal.SIGUSR1)
+        for _ in range(200):
+            if controller.events:
+                break
+            await asyncio.sleep(0.01)
+        assert controller.events == [RetryRequested()]
 
-    os.kill(os.getpid(), signal.SIGUSR1)
-    for _ in range(200):
-        if controller.events:
-            break
-        await asyncio.sleep(0.01)
-    assert controller.events == [RetryRequested()]
-
-    os.kill(os.getpid(), signal.SIGTERM)
-    assert await asyncio.wait_for(task, 5) == 0
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
     assert controller.cancelled
     assert build.dry_run is True
 
@@ -313,25 +486,62 @@ async def test_run_app_sigusr1_enqueues_retry_and_sigterm_exits_zero(
 async def test_run_app_sigint_also_exits_zero(cfg, monkeypatch, restore_signals):
     controller = FakeController()
     patch_build(monkeypatch, controller)
-    task = asyncio.ensure_future(app.run_app(cfg, False))
-    await asyncio.wait_for(controller.started.wait(), 2)
-    os.kill(os.getpid(), signal.SIGINT)
-    assert await asyncio.wait_for(task, 5) == 0
+    async with running_app(cfg, controller) as task:
+        os.kill(os.getpid(), signal.SIGINT)
+        assert await asyncio.wait_for(task, 5) == 0
 
 
-async def test_run_app_task_crash_logs_cancels_rest_and_returns_nonzero(
+async def test_run_app_controller_crash_logs_cancels_rest_and_returns_nonzero(
     cfg, monkeypatch, restore_signals, caplog
 ):
-    async def boom():
-        raise RuntimeError("memory guard exploded")
+    controller = FakeController(run_exc=RuntimeError("controller exploded"), run_delay=0.05)
+    other = {"cancelled": False}
 
-    controller = FakeController()
-    patch_build(monkeypatch, controller, extra=[boom()])
+    async def other_background():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            other["cancelled"] = True
+            raise
+
+    patch_build(monkeypatch, controller, extra=[other_background()])
     with caplog.at_level(logging.ERROR):
         rc = await asyncio.wait_for(app.run_app(cfg, False), 5)
     assert rc != 0
-    assert controller.cancelled
-    assert "memory guard exploded" in caplog.text
+    assert other["cancelled"]
+    assert "controller exploded" in caplog.text
+    assert any(r.exc_info for r in caplog.records)
+
+
+async def test_run_app_crashing_background_task_does_not_take_down_controller(
+    cfg, monkeypatch, restore_signals, caplog
+):
+    """A missing Stream Deck / evdev must never end the stream controller."""
+    monkeypatch.setattr(app, "BACKOFF_INITIAL_S", 0.001)
+    monkeypatch.setattr(app, "BACKOFF_MAX_S", 0.004)
+    attempts = []
+    blocked = asyncio.Event()
+
+    async def power_start():
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise ImportError("No module named 'evdev'")
+        blocked.set()
+        await asyncio.Event().wait()
+
+    controller = FakeController()
+    patch_build(
+        monkeypatch, controller, extra=[app._supervised("power", power_start)]
+    )
+    with caplog.at_level(logging.ERROR):
+        async with running_app(cfg, controller) as task:
+            await asyncio.wait_for(blocked.wait(), 2)
+            assert len(attempts) == 3
+            assert not task.done()
+            assert not controller.cancelled
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert await asyncio.wait_for(task, 5) == 0  # clean exit, not a crash
+    assert caplog.text.count("evdev") >= 2
     assert any(r.exc_info for r in caplog.records)
 
 
@@ -353,12 +563,11 @@ async def test_run_app_background_task_returning_normally_is_fine(
 
     controller = FakeController()
     patch_build(monkeypatch, controller, extra=[returns()])
-    task = asyncio.ensure_future(app.run_app(cfg, False))
-    await asyncio.wait_for(controller.started.wait(), 2)
-    await asyncio.sleep(0.05)
-    assert not task.done()
-    os.kill(os.getpid(), signal.SIGTERM)
-    assert await asyncio.wait_for(task, 5) == 0
+    async with running_app(cfg, controller) as task:
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
 
 
 async def test_run_app_stops_deck_adapter_on_shutdown(cfg, monkeypatch, restore_signals):
@@ -371,10 +580,9 @@ async def test_run_app_stops_deck_adapter_on_shutdown(cfg, monkeypatch, restore_
     controller = FakeController()
     controller.deck = Deck()
     patch_build(monkeypatch, controller)
-    task = asyncio.ensure_future(app.run_app(cfg, False))
-    await asyncio.wait_for(controller.started.wait(), 2)
-    os.kill(os.getpid(), signal.SIGTERM)
-    assert await asyncio.wait_for(task, 5) == 0
+    async with running_app(cfg, controller) as task:
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
     assert stopped == [True]
 
 
