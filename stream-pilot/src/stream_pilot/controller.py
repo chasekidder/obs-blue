@@ -60,6 +60,9 @@ STOP_POLL_S = 0.5
 # Upper bound for awaits made inline from handle(): a hung adapter must never
 # keep a queued PowerPress waiting.
 INLINE_TIMEOUT_S = 5.0
+# Upper bound for each adapter call in the end flow / power-off flow: a hung
+# adapter must never keep system.poweroff() from running.
+END_STEP_TIMEOUT_S = 15.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -486,7 +489,8 @@ class Controller:
 
             await self._login_phase()
 
-        await self._setup_phase()
+        if not await self._setup_phase():
+            return  # a live is running: leave it (and its state) alone
         self._transition(State.READY)
 
     async def _reachable(self) -> bool:
@@ -515,11 +519,27 @@ class Controller:
                 failures = 0
             await self._sleep(LOGIN_POLL_S)
 
-    async def _setup_phase(self) -> None:
+    def _setup_blocked_by_live(self) -> bool:
+        """True (and logged) if a live is running, so setup must not touch anything.
+
+        This is deliberately not a StepFailed: that would be retried and could
+        eventually put a running live into ERROR.
+        """
+        if self.state in LIVE_STATES:
+            log.error("refusing to run setup: state is %s (a live is running)", self.state)
+            return True
+        return False
+
+    async def _setup_phase(self) -> bool:
+        """Returns True when setup completed, False when skipped because live."""
+        if self._setup_blocked_by_live():
+            return False
         self._enter(State.SETUP)
         attempts = max(1, self.cfg.timeouts.attempts)
         t = self.cfg.timeouts
         for attempt in range(1, attempts + 1):
+            if self._setup_blocked_by_live():
+                return False
             try:
                 target = await self.fb.setup_live()
                 await self.obs.set_stream_target(target)
@@ -527,28 +547,36 @@ class Controller:
                     # SETUP: no live exists (the live only starts with go-live),
                     # so replacing the pre-roll stream is safe. Local guard: never
                     # stop the stream if we somehow are in a live state.
-                    if self.state in LIVE_STATES:
-                        log.error("refusing stop_stream during setup: state is %s", self.state)
-                        raise StepFailed("internal", f"setup reached stop_stream while {self.state}")
+                    if self._setup_blocked_by_live():
+                        return False  # never touch a live's stream (nor ERROR it)
                     await self.obs.stop_stream()
                     await self._wait_stream_stopped()
                 await self.obs.start_stream()
                 await self.fb.wait_preview_ready(t.preview_s)
-                return
+                return True
             except StepFailed as exc:
                 log.warning("setup attempt %d/%d failed: %s", attempt, attempts, exc)
                 if attempt >= attempts:
                     raise
+        return True  # unreachable: the loop returns or raises
 
     async def _wait_stream_stopped(self) -> None:
         waited = 0.0
         stop_s = self.cfg.timeouts.stop_s
         while True:
             try:
-                if not await self.obs.stream_active():
+                active = await asyncio.wait_for(
+                    self.obs.stream_active(), END_STEP_TIMEOUT_S
+                )
+                if not active:
                     return
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:
+                # A hung poll counts as waiting that long, so a hung OBS cannot
+                # stretch the stop wait beyond ~stop_s (+ one timeout).
+                log.warning("stream_active poll timed out after %.1fs", END_STEP_TIMEOUT_S)
+                waited += END_STEP_TIMEOUT_S
             except Exception as exc:
                 log.warning("stream_active poll failed: %r", exc)
             if waited >= stop_s:
@@ -617,13 +645,24 @@ class Controller:
         await self._best_effort("park_dashboard", self.fb.park_dashboard())
 
     @staticmethod
-    async def _best_effort(name: str, aw: Awaitable[object]) -> None:
+    async def _best_effort(
+        name: str, aw: Awaitable[object], timeout: float | None = None
+    ) -> None:
         try:
-            await aw
+            if timeout is None:
+                await aw
+            else:
+                await asyncio.wait_for(aw, timeout)
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            log.warning("%s timed out after %.1fs (continuing)", name, timeout)
         except Exception:
             log.exception("%s failed (continuing)", name)
+
+    async def _bounded_step(self, name: str, aw: Awaitable[object]) -> None:
+        """Best-effort end-flow step, at most END_STEP_TIMEOUT_S (read at call time)."""
+        await self._best_effort(name, aw, END_STEP_TIMEOUT_S)
 
     # -------------------------------------------------------- OBS restart loop
 
@@ -658,11 +697,11 @@ class Controller:
     # ------------------------------------------------------------------- end
 
     async def _end_flow(self, *, power_off: bool) -> None:
-        await self._best_effort("stop_stream", self.obs.stop_stream())
+        await self._bounded_step("stop_stream", self.obs.stop_stream())
         await self._wait_stream_stopped()
 
         await self._sleep(self.cfg.timeouts.fb_end_wait_s)
-        await self._best_effort("capture.stop", self.capture.stop())
+        await self._bounded_step("capture.stop", self.capture.stop())
         self._write_report()
 
         # Branch point (synchronous with the flag check, so a PowerPress either
@@ -693,8 +732,8 @@ class Controller:
         await self._power_steps()
 
     async def _power_steps(self) -> None:
-        await self._best_effort("close_browser", self.fb.close_browser())
-        await self._best_effort(
+        await self._bounded_step("close_browser", self.fb.close_browser())
+        await self._bounded_step(
             "stop obs.service", self.system.stop_user_unit("obs.service")
         )
         await self._best_effort("poweroff", self.system.poweroff())

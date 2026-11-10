@@ -1278,11 +1278,124 @@ async def test_setup_phase_refuses_stop_stream_while_live(rig):
         return True
 
     rig.obs.stream_active = active_but_state_flipped_to_live
-    with pytest.raises(StepFailed) as exc:
-        await rig.c._setup_phase()
-    assert exc.value.step == "internal"
+    assert await rig.c._setup_phase() is False  # bails out; never raises/errors a live
+    assert rig.c.state == State.LIVE
     assert "obs.stop_stream" not in rig.names(rig.obs)
     assert "obs.start_stream" not in rig.names(rig.obs)
+
+
+# ------------------------------------ hardening: bounded end flow, setup live guard
+
+
+@pytest.fixture
+def short_end_timeout(monkeypatch):
+    monkeypatch.setattr(controller_mod, "END_STEP_TIMEOUT_S", 0.05)
+
+
+def test_end_step_timeout_default_is_15_seconds():
+    assert controller_mod.END_STEP_TIMEOUT_S == 15
+
+
+async def test_hung_close_browser_still_powers_off(rig, short_end_timeout, caplog):
+    await rig.to_live()
+    rig.fb.gates["close_browser"] = asyncio.Event()  # never set: hung
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.names(rig.fb).count("fb.close_browser") == 1
+    assert ("system.stop_user_unit", "obs.service") in rig.system.calls
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+    assert "close_browser timed out" in caplog.text
+
+
+async def test_hung_close_browser_in_non_live_shutdown_still_powers_off(
+    rig, short_end_timeout
+):
+    await rig.to_ready()
+    rig.fb.gates["close_browser"] = asyncio.Event()
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+
+
+async def test_hung_stop_user_unit_still_powers_off(rig, short_end_timeout):
+    await rig.to_ready()
+    rig.system.gates["stop_user_unit"] = asyncio.Event()
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+
+
+async def test_hung_stop_stream_and_capture_stop_still_power_off(rig, short_end_timeout):
+    await rig.to_live()
+    rig.obs.gates["stop_stream"] = asyncio.Event()
+    rig.capture.gates["stop"] = asyncio.Event()
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert ("obs.stop_stream",) in rig.obs.calls
+    assert ("capture.stop",) in rig.capture.calls
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+
+
+async def test_hung_stream_active_poll_in_end_flow_still_powers_off(
+    rig, short_end_timeout
+):
+    await rig.to_live()
+    rig.obs.gates["stream_active"] = asyncio.Event()
+    await rig.c.handle(PowerPress())
+    await rig.settle()
+    assert rig.system.calls.count(("system.poweroff",)) == 1
+
+
+async def test_long_press_end_with_hung_capture_stop_returns_to_setup(
+    rig, short_end_timeout
+):
+    await rig.to_live()
+    rig.capture.gates["stop"] = asyncio.Event()
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert ("system.poweroff",) not in rig.system.calls
+
+
+async def test_setup_phase_returns_without_touching_obs_or_state_when_live(rig, caplog):
+    await rig.to_live()
+    rig.clear()
+    saves = len(rig.store.history)
+    await rig.c._setup_phase()  # must not raise
+    assert rig.c.state == State.LIVE
+    assert rig.obs.calls == []
+    assert rig.fb.calls == []
+    assert len(rig.store.history) == saves
+    assert "setup" in caplog.text and "LIVE" in caplog.text
+
+
+async def test_setup_attempt_guard_checks_state_on_every_attempt(rig):
+    """A live that appears between attempts must not be touched by a retry."""
+    await rig.c.boot()
+    await rig.settle()
+    rig.clear()
+
+    original = rig.fb.setup_live
+
+    async def fail_then_go_live():
+        await original()
+        rig.c.state = State.LIVE  # simulate a concurrent change
+        raise StepFailed("setup", "boom")
+
+    rig.fb.setup_live = fail_then_go_live
+    await rig.c._setup_phase()  # attempt 1 fails; attempt 2 sees LIVE and bails
+    assert rig.c.state == State.LIVE
+    assert rig.names(rig.fb).count("fb.setup_live") == 1
+    assert "obs.stop_stream" not in rig.names(rig.obs)
+    assert "obs.start_stream" not in rig.names(rig.obs)
+
+
+async def test_setup_flow_never_marks_a_live_ready(rig):
+    await rig.to_live()
+    rig.clear()
+    await rig.c._setup_flow("SETUP")
+    assert rig.c.state == State.LIVE
+    assert rig.obs.calls == []
 
 
 def test_live_states_constant_matches_controller_expectation():

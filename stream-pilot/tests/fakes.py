@@ -106,6 +106,7 @@ class FakeObs(Gated):
 
     async def stop_stream(self) -> None:
         self.calls.append(("obs.stop_stream",))
+        await self._gated("stop_stream")
         self._stop.raise_next()
         if not self.stop_keeps_active:
             self.active = False
@@ -211,10 +212,11 @@ class FakeFacebook(Gated):
 
     async def close_browser(self) -> None:
         self.calls.append(("fb.close_browser",))
+        await self._gated("close_browser")
         self._close.raise_next()
 
 
-class FakeCapture:
+class FakeCapture(Gated):
     def __init__(
         self,
         *,
@@ -222,6 +224,7 @@ class FakeCapture:
         stop_raises: Any = None,
         calls: list | None = None,
     ):
+        self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self._start = Script(start_raises)
         self._stop = Script(stop_raises)
@@ -232,6 +235,7 @@ class FakeCapture:
 
     async def stop(self) -> None:
         self.calls.append(("capture.stop",))
+        await self._gated("stop")
         self._stop.raise_next()
 
 
@@ -252,7 +256,7 @@ class FakeDeck:
         self.calls.append(("deck.start",))
 
 
-class FakeSystem:
+class FakeSystem(Gated):
     def __init__(
         self,
         *,
@@ -260,6 +264,7 @@ class FakeSystem:
         poweroff_raises: Any = None,
         calls: list | None = None,
     ):
+        self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self._stop_unit = Script(stop_unit_raises)
         self._poweroff = Script(poweroff_raises)
@@ -270,6 +275,7 @@ class FakeSystem:
 
     async def stop_user_unit(self, unit: str) -> None:
         self.calls.append(("system.stop_user_unit", unit))
+        await self._gated("stop_user_unit")
         self._stop_unit.raise_next()
 
 
