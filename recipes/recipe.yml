@@ -31,8 +31,9 @@ modules:
         - python3-pillow
         - python3-websockets
         - python3-pip
+        # greenboot-default-health-checks is deliberately NOT installed: its required
+        # DNS check would roll back a boot that merely has no network.
         - greenboot
-        - greenboot-default-health-checks
         - libva-intel-media-driver # already in the base; listed explicitly
         - dejavu-sans-fonts # Stream Deck key renderer font
       exclude:
@@ -68,8 +69,13 @@ modules:
 
   - type: systemd
     system:
+      enabled:
+        - rpm-ostreed-automatic.timer # stage updates only (/etc/rpm-ostreed.conf); already enabled in the base
+        - greenboot-healthcheck.service # not enabled by preset in this base
+        - greenboot-set-rollback-trigger.service # arms boot_counter when an update is staged
       disabled:
         - flatpak-system-update.timer # no unattended flatpak updates
+        - bootc-fetch-apply-updates.timer # runs `bootc upgrade --apply`, which reboots
     user:
       enabled:
         - obs.service

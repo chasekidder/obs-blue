@@ -1,0 +1,56 @@
+name: promote
+# Manually promote an already-built, already-tested :latest digest to :stable.
+# The stream PC follows :stable only. Find the digest with:
+#   skopeo inspect docker://ghcr.io/<owner>/obs-blue:latest | jq -r .Digest
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "Image digest to promote to :stable (sha256:...)"
+        required: true
+        type: string
+concurrency:
+  group: promote
+  cancel-in-progress: false
+jobs:
+  promote:
+    name: Promote digest to :stable
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      DIGEST: ${{ inputs.digest }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Validate digest
+        run: |
+          if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "digest must look like sha256:<64 hex chars>, got: $DIGEST" >&2
+            exit 1
+          fi
+          echo "IMAGE=ghcr.io/${OWNER,,}/obs-blue" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Copy digest to :stable
+        run: |
+          skopeo copy --all \
+            "docker://${IMAGE}@${DIGEST}" \
+            "docker://${IMAGE}:stable"
+
+      - name: Sign the promoted digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          COSIGN_PASSWORD: ""
+        run: |
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
