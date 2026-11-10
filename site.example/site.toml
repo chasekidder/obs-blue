@@ -8,7 +8,10 @@
 # is generated on first boot into ~/.config/stream-pilot/secrets.toml.
 #
 # NOTE: an empty string overrides the built-in default, so a value you leave
-# as "" is NOT "use the default" - it is "unset". Fill in everything.
+# as "" is NOT "use the default" - it is "unset". Fill in every uncommented
+# value. The camera and microphone IDs can only be read on the installed
+# machine, so they stay commented out (built-in defaults apply) until you
+# fill them in after the first boot.
 #
 # After the first boot, if you change a camera or microphone ID below, apply
 # it with:
@@ -41,14 +44,14 @@ session_id = ""
 # If both cameras are the same model without serial numbers their by-id names
 # collide; use the /dev/v4l/by-path/...-video-index0 link instead (it is tied
 # to the USB port, so always plug each camera into the same port).
-device = ""
+#device = "/dev/v4l/by-id/usb-Vendor_Camera_SERIAL-video-index0"
 
 [cameras.jewelry]
 # V4L2 device node for the jewelry (close-up) camera; same rules as above.
-device = ""
+#device = "/dev/v4l/by-id/usb-Vendor_Camera2_SERIAL-video-index0"
 
 [audio]
 # PulseAudio/PipeWire source name of the microphone. On the installed system:
 #   pactl list short sources
 # and copy the second column of the input device (not a ".monitor" source).
-mic_device = ""
+#mic_device = "alsa_input.usb-Vendor_Device-00.mono-fallback"
