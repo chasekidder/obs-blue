@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Live Producer setup (fixture)</title></head>
+<body>
+<div id="app">
+  <h1>Set up live video</h1>
+  <p>Posting to Test Resale Group</p>
+  <button type="button" id="sw-btn">Streaming software</button>
+
+  <section id="key-section" hidden>
+    <label>Server URL
+      <input type="text" readonly aria-label="Server URL" value="rtmps://edgetee-upload-test.xx.fbcdn.net:443/rtmp/"></label>
+    <label>Stream key
+      <input type="text" readonly aria-label="Stream key" value="FB-1234567890123456-0-AbCdEfGhIjKlMnOpQrStUvWx"></label>
+
+    <button type="button" id="adv-btn" aria-expanded="false">Advanced settings</button>
+    <div id="adv" hidden>
+      <div role="switch" tabindex="0" aria-checked="false" aria-label="Persistent stream key"></div>
+      <div role="switch" tabindex="0" aria-checked="true" aria-label="End live video when stream stops"></div>
+    </div>
+  </section>
+
+  <button type="button" id="go" disabled aria-disabled="true">Go live</button>
+</div>
+
+<div id="interstitial" role="dialog" aria-modal="true" aria-label="Before you go live" hidden>
+  <p>Ready to go live?</p>
+  <button type="button" onclick="location.href='/live/producer/dashboard/1122334455667788/'">Go live</button>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+$('sw-btn').onclick = () => { $('key-section').hidden = false; };
+$('adv-btn').onclick = () => {
+  const open = $('adv').hidden;
+  $('adv').hidden = !open;
+  $('adv-btn').setAttribute('aria-expanded', String(open));
+};
+for (const sw of document.querySelectorAll('[role=switch]')) {
+  const toggle = () => sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
+  sw.onclick = toggle;
+  sw.onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
+}
+window.__previewReady = () => setTimeout(() => {
+  $('go').disabled = false;
+  $('go').setAttribute('aria-disabled', 'false');
+}, 1000);
+$('go').onclick = () => {
+  if ($('go').disabled) return;
+  $('app').setAttribute('aria-hidden', 'true');  // modal: hide the page behind it from the a11y tree
+  $('interstitial').hidden = false;
+};
+</script>
+</body></html>

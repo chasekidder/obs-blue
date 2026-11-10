@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Comments (fixture)</title></head>
+<body>
+<h1>Comments</h1>
+<div id="list"></div>
+<script>
+const KEY = 'fixture-comments';
+let comments = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+if (!comments) {
+  comments = [
+    ['Ann', 'Is the lamp still available?', true],
+    ['Bob', 'sold?', false],
+    ['Cara', 'How much for the chair?', true],
+    ['Dan', 'Can I pick up tomorrow', false],
+  ].map(([author, text, withId], i) => ({ author, text, id: withId ? String(9988776655443300 + i) : null }));
+  sessionStorage.setItem(KEY, JSON.stringify(comments));
+}
+let nextId = Math.max(9988776655443399, ...comments.map((c) => Number(c.id) || 0)) + 1;
+
+function render(c) {
+  const el = document.createElement('div');
+  el.setAttribute('role', 'article');
+  el.setAttribute('aria-label', 'Comment by ' + c.author + ' 1 minute ago');
+  const a = document.createElement('a');
+  a.setAttribute('role', 'link');
+  a.href = '/profile/' + encodeURIComponent(c.author);
+  a.textContent = c.author;
+  const text = document.createElement('div');
+  text.className = 'text';
+  text.textContent = c.text;
+  el.append(a, text);
+  if (c.id) {
+    const p = document.createElement('a');
+    p.href = '?comment_id=' + c.id;
+    p.textContent = '1m';
+    el.append(p);
+  }
+  document.getElementById('list').append(el);
+}
+comments.forEach(render);
+
+window.__addComment = (author, text, withId) => {
+  const c = { author, text, id: withId ? String(nextId++) : null };
+  comments.push(c);
+  sessionStorage.setItem(KEY, JSON.stringify(comments));
+  render(c);
+};
+window.__reloadWith = (n) => {
+  sessionStorage.setItem(KEY, JSON.stringify(n > 0 ? comments.slice(-n) : []));
+  location.reload();
+};
+</script>
+</body></html>

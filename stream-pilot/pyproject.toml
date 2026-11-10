@@ -31,3 +31,4 @@ stream_pilot = ["fb/*.js", "data/*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["browser: needs headless Chromium + Playwright (set STREAM_PILOT_BROWSER_TESTS=1)"]
