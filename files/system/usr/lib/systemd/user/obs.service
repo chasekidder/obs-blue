@@ -1,0 +1,14 @@
+[Unit]
+Description=OBS Studio for stream-pilot
+PartOf=graphical-session.target
+After=graphical-session.target xdg-desktop-portal.service
+
+[Service]
+ExecStartPre=/usr/bin/stream-pilot seed-obs
+ExecStart=/usr/bin/obs --disable-shutdown-check --profile "FB Live" --collection "Untitled"
+Restart=on-failure
+RestartSec=3
+MemoryLow=1G
+
+[Install]
+WantedBy=graphical-session.target

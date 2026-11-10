@@ -1,0 +1,15 @@
+[Unit]
+Description=Chromium for stream-pilot
+PartOf=graphical-session.target
+After=graphical-session.target xdg-desktop-portal.service
+
+[Service]
+ExecStartPre=-/usr/bin/stream-pilot chromium-prep
+ExecStart=/usr/libexec/stream-pilot/chromium-launch about:blank
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=500
+MemoryHigh=3G
+
+[Install]
+WantedBy=graphical-session.target

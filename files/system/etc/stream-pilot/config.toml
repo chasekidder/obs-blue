@@ -1,0 +1,7 @@
+# stream-pilot system defaults (image-wide, non-secret).
+# Site-specific values (Facebook IDs, camera devices, SSN session) go in
+# ~/.config/stream-pilot/site.toml. Secrets (e.g. the OBS websocket password)
+# are generated at runtime into ~/.config/stream-pilot/secrets.toml.
+
+[cdp]
+chromium_bin = "/usr/bin/chromium-browser"

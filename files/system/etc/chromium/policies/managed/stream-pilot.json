@@ -1,0 +1,19 @@
+{
+  "ExtensionInstallForcelist": [
+    "cppibjhfemifednoimlblfcmjgfhfjeg;https://clients2.google.com/service/update2/crx",
+    "ddkjiahejlhfcafbddmgiahcphecmpfh;https://clients2.google.com/service/update2/crx"
+  ],
+  "RestoreOnStartup": 1,
+  "NewTabPageLocation": "about:blank",
+  "SyncDisabled": true,
+  "TranslateEnabled": false,
+  "SpellcheckEnabled": false,
+  "NetworkPredictionOptions": 2,
+  "BackgroundModeEnabled": false,
+  "PasswordManagerEnabled": false,
+  "MemorySaverModeSavings": 0,
+  "HighEfficiencyModeEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "PromotionsEnabled": false,
+  "MetricsReportingEnabled": false
+}

@@ -1,0 +1,8 @@
+#!/bin/sh
+exec "${CHROMIUM_BIN:-/usr/bin/chromium-browser}" \
+  --user-data-dir="$HOME/.local/share/stream-pilot/chromium" \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --hide-crash-restore-bubble --no-first-run --no-default-browser-check \
+  --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+  --disable-background-timer-throttling --ozone-platform=wayland \
+  "$@"

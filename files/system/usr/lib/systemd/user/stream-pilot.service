@@ -1,0 +1,13 @@
+[Unit]
+Description=stream-pilot controller
+PartOf=graphical-session.target
+After=graphical-session.target obs.service chromium.service
+Wants=obs.service chromium.service
+
+[Service]
+ExecStart=/usr/bin/stream-pilot run
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
