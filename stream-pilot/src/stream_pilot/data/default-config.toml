@@ -1,0 +1,53 @@
+[facebook]
+actor_id = ""
+group_id = ""
+group_name = ""
+producer_url_template = "https://www.facebook.com/live/producer/?actor={actor_id}&entry_point=group&target_id={group_id}"
+comments_url_template = "https://www.facebook.com/live/producer/dashboard/{live_id}/COMMENTS/"
+
+[obs]
+host = "127.0.0.1"
+port = 4455
+password = ""
+
+[cdp]
+url = "http://127.0.0.1:9222"
+user_data_dir = "~/.local/share/stream-pilot/chromium"
+chromium_bin = "/usr/bin/chromium-browser"
+
+[ssn]
+enabled = true
+session_id = ""
+
+[cameras.main]
+scene = "Main Camera"
+device = "/dev/video0"
+
+[cameras.jewelry]
+scene = "Jewlery Camera"
+device = "/dev/video2"
+
+[memory]
+interval_s = 60
+floor_mb = 600
+popout_rss_warn_mb = 1500
+auto_reload_popout = false
+
+[deck]
+long_press_s = 3.0
+brightness = 70
+
+[timeouts]
+step_s = 30
+attempts = 3
+preview_s = 180
+live_confirm_s = 60
+stop_s = 10
+fb_end_wait_s = 5
+net_retry_s = 1
+reconnect_retry_s = 5
+
+[paths]
+state_dir = "~/.local/state/stream-pilot"
+streams_dir = "~/streams"
+failures_dir = "~/.local/state/stream-pilot/failures"
