@@ -1,0 +1,9 @@
+[AC][Display]
+DimDisplayWhenIdle=false
+TurnOffDisplayWhenIdle=false
+LockBeforeTurnOffDisplay=false
+
+[AC][SuspendAndShutdown]
+AutoSuspendAction=0
+PowerButtonAction=0
+LidAction=0

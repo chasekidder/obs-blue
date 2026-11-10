@@ -1,0 +1,12 @@
+[Desktop Entry]
+StartupNotify=false
+X-KDE-autostart-phase=2
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+Type=Application
+Name=Xwayland Video Bridge
+GenericName=Share screens and windows to XWayland applications
+Icon=org.kde.xwaylandvideobridge
+Exec=xwaylandvideobridge
+Categories=Qt;KDE;Utility;X-KDE-Utilities-Desktop;
+Hidden=true

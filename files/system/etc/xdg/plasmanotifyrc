@@ -1,0 +1,6 @@
+[DoNotDisturb]
+Until=2099-12-31T23:59:59
+
+[Notifications]
+CriticalInDndMode=false
+LowPriorityPopups=false
