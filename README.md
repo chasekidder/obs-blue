@@ -69,6 +69,8 @@ Do this once, after the first boot from the ISO. After that, boots need no inter
   ```
   When it looks right, `systemctl --user start stream-pilot` (or reboot) to return to normal operation.
 
+For the full test-Group walkthrough (screenshot recording, a complete test live, ending, the comment report, and the hardware checks), see the [Facebook live validation runbook](docs/superpowers/runbooks/facebook-live-validation.md).
+
 Useful afterwards:
 
 - `stream-pilot status` shows the current state.
