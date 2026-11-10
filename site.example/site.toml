@@ -1,0 +1,54 @@
+# stream-pilot site configuration (template).
+#
+# Copy this directory to `site/` (gitignored) and fill every value in. The
+# ISO kickstart installs the result as ~/.config/stream-pilot/site.toml for
+# user `stream`, where it overrides the image's built-in defaults. Only the
+# keys listed here are meant to be site-specific; everything else keeps its
+# default. There is deliberately no [obs] section: the obs-websocket password
+# is generated on first boot into ~/.config/stream-pilot/secrets.toml.
+#
+# NOTE: an empty string overrides the built-in default, so a value you leave
+# as "" is NOT "use the default" - it is "unset". Fill in everything.
+#
+# After the first boot, if you change a camera or microphone ID below, apply
+# it with:
+#   systemctl --user stop obs && stream-pilot seed-obs --reset-scenes && systemctl --user start obs
+
+[facebook]
+# Numeric ID of the PERSONAL Facebook profile that starts the live video (the
+# "actor" in the producer URL: ...producer/?actor=<this>&...). Open the profile
+# and read the number from the profile URL (profile.php?id=<number>) or from
+# the producer URL after starting a live video by hand.
+actor_id = ""
+# Numeric ID of the Facebook Group that is streamed to (the "target_id" in the
+# producer URL; also the number in https://www.facebook.com/groups/<id>/).
+group_id = ""
+# The Group's display name exactly as Facebook shows it (used to confirm the
+# right Group is selected).
+group_name = ""
+
+[ssn]
+# Social Stream Ninja session ID. TREAT AS A SECRET: anyone who knows it can
+# talk to the stream's chat API. Find it in the SSN extension / dock URL
+# (...?session=<this>).
+session_id = ""
+
+[cameras.main]
+# V4L2 device node for the main camera. On the installed system run:
+#   ls -l /dev/v4l/by-id/ /dev/v4l/by-path/
+# Prefer the stable by-id link ending in "-video-index0", e.g.
+#   /dev/v4l/by-id/usb-Vendor_Camera_SERIAL-video-index0
+# If both cameras are the same model without serial numbers their by-id names
+# collide; use the /dev/v4l/by-path/...-video-index0 link instead (it is tied
+# to the USB port, so always plug each camera into the same port).
+device = ""
+
+[cameras.jewelry]
+# V4L2 device node for the jewelry (close-up) camera; same rules as above.
+device = ""
+
+[audio]
+# PulseAudio/PipeWire source name of the microphone. On the installed system:
+#   pactl list short sources
+# and copy the second column of the input device (not a ".monitor" source).
+mic_device = ""

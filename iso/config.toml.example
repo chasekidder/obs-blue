@@ -1,0 +1,85 @@
+# bootc-image-builder config for the anaconda-iso build. TEMPLATE: the @...@
+# placeholders are filled in by the render snippet in iso/README.md, which
+# writes iso/config.toml (gitignored: it contains secrets). Never commit the
+# rendered file.
+#
+# `contents` is a TOML *literal* multi-line string ('''...'''), so backslashes
+# and `$` in the kickstart or the substituted values are taken verbatim.
+#
+# bootc-image-builder adds the `ostreecontainer ...` command itself - do NOT add
+# it (or anything conflicting with it) here. It adds NO other commands, so
+# partitioning, network, locale, users and reboot are all ours. A kickstart
+# block replaces [customizations.user]; do not combine the two.
+
+[customizations.installer.kickstart]
+contents = '''
+text --non-interactive
+reboot
+
+lang en_US.UTF-8
+keyboard us
+# Change if the PC is not on US Eastern time.
+timezone America/New_York --utc
+network --bootproto=dhcp --device=link --activate --onboot=on
+
+# Unattended: wipe the first disk and let anaconda lay it out.
+zerombr
+clearpart --all --initlabel
+autopart
+
+# root is locked; `stream` is the only login (sudo via wheel).
+rootpw --lock
+user --name=stream --groups=wheel --iscrypted --password=@PASSWORD_HASH@
+sshkey --username=stream "@SSH_PUBKEY@"
+
+%post --erroronfail --log=/root/stream-pilot-ks-post.log
+set -eu
+
+# --- site.toml (holds the SSN session id: owner-only) ---
+umask 077
+install -d -m 0755 /var/home/stream/.config
+install -d -m 0700 /var/home/stream/.config/stream-pilot
+cat > /var/home/stream/.config/stream-pilot/site.toml <<'STREAM_PILOT_SITE_TOML_EOF'
+@SITE_TOML@
+STREAM_PILOT_SITE_TOML_EOF
+chmod 0600 /var/home/stream/.config/stream-pilot/site.toml
+chown -R stream:stream /var/home/stream/.config
+
+# --- Tailscale: tailscaled is disabled in the image and not running here, so
+# join the tailnet on first boot with a one-shot unit. The key is deleted once
+# `tailscale up` succeeds. ---
+install -d -m 0755 /etc/stream-pilot
+cat > /etc/stream-pilot/tailscale-authkey <<'STREAM_PILOT_TS_KEY_EOF'
+@TAILSCALE_AUTHKEY@
+STREAM_PILOT_TS_KEY_EOF
+chmod 0600 /etc/stream-pilot/tailscale-authkey
+chown root:root /etc/stream-pilot/tailscale-authkey
+
+cat > /etc/systemd/system/stream-pilot-tailscale-up.service <<'STREAM_PILOT_UNIT_EOF'
+[Unit]
+Description=Join the tailnet on first boot (stream-pilot)
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+ConditionPathExists=/etc/stream-pilot/tailscale-authkey
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/tailscale up --auth-key=file:/etc/stream-pilot/tailscale-authkey --hostname=stream-pc --ssh=false
+ExecStartPost=/usr/bin/rm -f /etc/stream-pilot/tailscale-authkey
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+STREAM_PILOT_UNIT_EOF
+chmod 0644 /etc/systemd/system/stream-pilot-tailscale-up.service
+
+# --- services (sshd and tailscaled are both disabled in the image) ---
+systemctl enable sshd.service tailscaled.service stream-pilot-tailscale-up.service
+
+# Files written here have no SELinux label yet; best effort.
+restorecon -R /var/home/stream /etc/stream-pilot /etc/systemd/system/stream-pilot-tailscale-up.service || true
+%end
+'''
