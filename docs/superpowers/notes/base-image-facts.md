@@ -130,3 +130,14 @@ Recorded from `localhost/obs-blue:dev` (recipe: dnf, files, default-flatpaks, sy
 - Units: `greenboot-healthcheck.service`, `greenboot-set-rollback-trigger.service`, `greenboot-success.target`, plus a `greenboot-healthcheck.service.d/10-network-online.conf` drop-in.
 - Check dirs: `/etc/greenboot/check/{required.d,wanted.d}` both **exist** (empty), and `/usr/lib/greenboot/check/{required.d,wanted.d}` ship the defaults.
 - `greenboot-default-health-checks` installs `/usr/lib/greenboot/check/required.d/01_repository_dns_check.sh` and `02_watchdog.sh`, and `wanted.d/01_update_platforms_check.sh`. **The DNS check is `required`**, so a PC with no network at boot may be rolled back. Task 4/6 should account for this, e.g. by deciding whether to mask or override it.
+
+## Window rules and oomd (Task 4)
+
+- **KWin 6.8.2 rules schema** (`rulesettings.kcfg` and `rulebooksettingsbase.kcfg` in the KWin 6.8.2 source, cross-checked against the key strings in `/usr/lib64/libkwin.so.6.8.2`; the rules schema is compiled in, so there is no kcfg under `/usr/share/config.kcfg`):
+  - `wmclass`, `wmclasscomplete`, `wmclassmatch` (0 = unimportant, 1 = exact, 2 = substring, 3 = regexp), `types` (`NET::NormalMask` = 1), `position`, `size`, `above`, `skiptaskbar`, `skippager`, `skipswitcher`, and the matching `<key>rule` keys all exist (`Force` = 2).
+  - **`noborder` is deprecated in 6.8.** KWin migrates `noborder`/`noborderrule` to `decorationpolicy` (`none`, `client-preference`, `server`, `shadow`) and `decorationpolicyrule`, and then rewrites the user's config. The shipped file uses `decorationpolicy=none`, `decorationpolicyrule=2`.
+  - **`[General] count=`/`rules=` are legacy.** The current key is `Order=`. A non-empty `rules=` triggers a migration and a rewrite of `~/.config/kwinrulesrc` on first load. The shipped file uses `Order=1,2` only.
+- **Cascade:** `RuleBookSettings` opens `KSharedConfig::openConfig("kwinrulesrc", KConfig::NoGlobals)`. That is a normal cascading config, so `/etc/xdg/kwinrulesrc` works as a default and `~/.config/kwinrulesrc` overrides it. In the image, `kreadconfig6 --file kwinrulesrc` reads the values from `/etc/xdg`. If the user ever edits rules in System Settings, the user file shadows the `Order` list, so a later task can seed `~/.config` at first boot if needed.
+- **OBS app_id:** the desktop file is `com.obsproject.Studio.desktop`, and the rule matches `com.obsproject.Studio` exactly. Chromium `--app=` windows match by substring on `chrome-www.facebook.com__live_producer_dashboard`.
+- **oomd:** the `user/slice.d` directory holds only `10-oomd-per-slice-defaults.conf`, and `systemd-analyze cat-config systemd/user/slice.d` in the built image lists `90-stream-pilot-oomd.conf` after it.
+- `udevadm verify` exists (systemd 259) and passes for `70-stream-pilot.rules`. The four `vm.*` sysctls exist in `/proc/sys/vm`.

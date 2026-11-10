@@ -1,0 +1,48 @@
+# stream-pilot window layout. The geometry below assumes a 1920x1080 screen:
+# OBS fills the left 70% (1344x1080), the Facebook comments popout is the right
+# 30% column (576x1080). stream-pilot's config has no override for this.
+#
+# Installed as an XDG default (/etc/xdg/kwinrulesrc); KWin reads kwinrulesrc through
+# KSharedConfig::openConfig, so a user's ~/.config/kwinrulesrc cascades over it.
+# Keys verified against KWin 6.8.2 (rulesettings.kcfg): <key>rule = 2 means "Force";
+# wmclassmatch 1 = exact, 2 = substring; types=1 is NET::NormalMask (normal windows
+# only, so OBS dialogs and projectors are left alone); decorationpolicy=none replaces
+# the deprecated noborder key; [General] Order replaces the legacy count/rules keys
+# (KWin 6.8 migrates those by rewriting the user's config on first load).
+[General]
+Order=1,2
+
+[1]
+Description=stream-pilot: OBS Studio left column
+wmclass=com.obsproject.Studio
+wmclasscomplete=false
+wmclassmatch=1
+types=1
+position=0,0
+positionrule=2
+size=1344,1080
+sizerule=2
+decorationpolicy=none
+decorationpolicyrule=2
+above=false
+aboverule=2
+
+[2]
+Description=stream-pilot: Facebook comments popout right column
+wmclass=chrome-www.facebook.com__live_producer_dashboard
+wmclasscomplete=false
+wmclassmatch=2
+position=1344,0
+positionrule=2
+size=576,1080
+sizerule=2
+decorationpolicy=none
+decorationpolicyrule=2
+above=true
+aboverule=2
+skiptaskbar=true
+skiptaskbarrule=2
+skippager=true
+skippagerrule=2
+skipswitcher=true
+skipswitcherrule=2

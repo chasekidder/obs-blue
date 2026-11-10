@@ -1,0 +1,5 @@
+# Elgato Stream Deck (vendor 0fd9): seat user access for hidapi
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+# ACPI power button event devices: read by stream-pilot (evdev)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Power Button", TAG+="uaccess"
