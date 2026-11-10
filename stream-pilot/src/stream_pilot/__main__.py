@@ -1,13 +1,12 @@
 """stream-pilot command-line entry point.
 
-Each subcommand dispatches to one small ``cmd_*`` function. ``run`` is
-wired up in a later task; until then it reports ``not implemented`` and
-returns exit code 2.
+Each subcommand dispatches to one small ``cmd_*`` function.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import subprocess
@@ -15,6 +14,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from .app import run_app
 from .chromium_prep import prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
@@ -39,13 +39,14 @@ def _load_config() -> Config:
     return load_config(_config_paths())
 
 
-def _not_implemented(_args: argparse.Namespace) -> int:
-    print("not implemented")
-    return 2
-
-
 def cmd_run(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+    """The long-running controller (stream-pilot.service)."""
+    try:
+        cfg = load_config(_config_paths())
+    except Exception:
+        log.exception("run: cannot load config")
+        return 1
+    return asyncio.run(run_app(cfg, args.dry_run))
 
 
 def _status_path() -> Path:
@@ -149,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     parsers["run"].add_argument(
         "--dry-run",
         action="store_true",
-        help="do not touch real devices or OBS; log intended actions",
+        help="do everything up to, but not including, clicking Go live",
     )
     parsers["health"].add_argument(
         "--timeout",

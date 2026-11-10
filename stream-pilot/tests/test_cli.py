@@ -18,9 +18,13 @@ def test_help_exits_zero(capsys):
         assert cmd in out
 
 
-def test_run_not_implemented_yet(capsys):
-    assert main(["run", "--dry-run"]) == 2
-    assert "not implemented" in capsys.readouterr().out
+def test_run_help_describes_dry_run(capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["run", "--help"])
+    assert e.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "do everything up to, but not including, clicking Go live" in out
+    assert "do not touch real devices" not in out
 
 
 @pytest.fixture
@@ -175,3 +179,34 @@ def test_health_cli_config_error_exits_1(home, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_load_config", boom)
     assert main(["health", "--timeout", "0"]) == 1
     assert "bad toml" in capsys.readouterr().err
+
+
+# --- run -----------------------------------------------------------------
+
+@pytest.mark.parametrize("argv, dry", [(["run"], False), (["run", "--dry-run"], True)])
+def test_run_cli_loads_config_and_runs_app(home, monkeypatch, argv, dry):
+    seen = {}
+
+    async def fake_run_app(cfg, dry_run):
+        seen["cfg"] = cfg
+        seen["dry_run"] = dry_run
+        return 7
+
+    monkeypatch.setattr(cli, "run_app", fake_run_app)
+    monkeypatch.setattr(cli, "load_config", lambda paths: ("cfg", list(paths)))
+    assert main(argv) == 7
+    assert seen["dry_run"] is dry
+    cfg_marker, paths = seen["cfg"]
+    assert cfg_marker == "cfg"
+    # paths are resolved at call time, honouring $HOME
+    assert paths == cli._config_paths()
+    assert paths[1] == home / ".config/stream-pilot/site.toml"
+
+
+def test_run_cli_config_error_exits_1(home, monkeypatch, caplog):
+    def boom(paths):
+        raise ValueError("bad toml")
+
+    monkeypatch.setattr(cli, "load_config", boom)
+    assert main(["run"]) == 1
+    assert "bad toml" in caplog.text
