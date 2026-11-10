@@ -12,11 +12,8 @@ image-version: 44 # latest is also supported if you want new updates ASAP
 # module configuration, executed in order
 # you can include multiple instances of the same module
 modules:
-  - type: files
-    files:
-      - source: system
-        destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
-
+  # dnf runs first so package-shipped files never overwrite our /etc overrides,
+  # and editing files/ does not invalidate the package-install layer cache.
   - type: dnf
     repos:
       copr:
@@ -26,33 +23,47 @@ modules:
         - micro
         - starship
         - tailscale
+        - obs-studio # RPM instead of Flatpak (no obs-studio-plugin-browser: no CEF)
+        - chromium # RPM instead of Flatpak
+        - v4l-utils
+        - hidapi
+        - python3-evdev
+        - python3-pillow
+        - python3-websockets
+        - python3-pip
+        - greenboot
+        - greenboot-default-health-checks
+        - libva-intel-media-driver # already in the base; listed explicitly
+        - dejavu-sans-fonts # Stream Deck key renderer font
+      exclude:
+        # obs-studio pulls this in as a weak dependency; the spec wants no CEF/browser plugin
+        - obs-studio-plugin-browser
     remove:
       packages:
-        # example: removing firefox (in favor of the flatpak)
-        # "firefox" is the main package, "firefox-langpacks" is a dependency
         - firefox
         - firefox-langpacks # also remove firefox dependency (not required for all packages, this is a special case)
 
+  - type: files
+    files:
+      - source: system
+        destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
+
   - type: default-flatpaks
     configurations:
-      - notify: true # Send notification after install/uninstall is finished (true/false)
+      - notify: false # no first-boot notifications on a kiosk-style stream PC
         scope: system
         # If no repo information is specified, Flathub will be used by default
-        install: # system flatpaks we want all users to have and not remove
-          - org.mozilla.firefox
-          - org.kde.gwenview
-          - com.obsproject.Studio
-          - org.chromium.Chromium
-      - scope: user # Also add Flathub user repo, but no user packages
+        install: # RustDesk has no RPM in the configured repos
+          - com.rustdesk.RustDesk
 
   - type: systemd
     system:
       disabled:
-        - flatpak-system-update.timer # disable the flatpak update timer
-
+        - flatpak-system-update.timer # no unattended flatpak updates
     user:
-      enabled:
-        - obs-autostart.service # autostart OBS on login
-        - chromium-autostart.service # autostart Chromium on login
+      disabled:
+        - flatpak-user-update.timer # enabled by user preset in the base; disable too
+    # obs.service / chromium.service / stream-pilot.service are enabled in Task 5,
+    # once the unit files exist (enabling a missing unit fails the build).
 
   - type: signing # this sets up the proper policy & signing files for signed images to work fully

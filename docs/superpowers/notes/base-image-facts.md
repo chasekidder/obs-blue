@@ -101,3 +101,32 @@ podman build -f /tmp/obs-blue.Containerfile -t localhost/obs-blue:dev .
 5. **No `kdeconnect-kde` to remove.** Its autostart is hidden anyway. `plasma-discover-notifier` is hidden, not removed.
 6. **oomd:** the override goes in `/usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf` and not in `user@.service.d/`.
 7. **Module order:** `dnf` runs before `files`, so package files never overwrite our `/etc` overrides, and editing `files/` doesn't invalidate the package-install layer cache.
+
+## Built image (Task 2)
+
+Recorded from `localhost/obs-blue:dev` (recipe: dnf, files, default-flatpaks, systemd, signing). Packages as built: `obs-studio-32.1.1-3.fc44`, `chromium-156.0.8078.79-1.fc44`, `v4l-utils-1.32.0`, `hidapi-0.15.0`, `python3-evdev-1.9.3`, `python3-pillow-12.3.0`, `python3-websockets-15.0.1`, `python3-pip-26.0.1`, `greenboot-0.16.4` (+ `greenboot-default-health-checks`), `dejavu-sans-fonts-2.37`, `libva-intel-media-driver-26.4.0`. `firefox` is absent.
+
+- **`obs-studio-plugin-browser` is pulled in as a weak dependency** of `obs-studio`, even though the recipe doesn't list it. The recipe therefore sets `install.exclude: [obs-studio-plugin-browser]`. In the built image `obs-browser.so`/`obs-browser-page` are absent (no CEF).
+- **Python:** `python3` is 3.14.10.
+
+### Chromium
+- Binary: `/usr/bin/chromium-browser`, a symlink to `/usr/lib64/chromium-browser/chromium-browser.sh`. This is the only binary in `/usr/bin`. There is no `/usr/bin/chromium`. `[cdp] chromium_bin = "/usr/bin/chromium-browser"` in `default-config.toml` is correct.
+- Desktop file: `/usr/share/applications/chromium-browser.desktop`, `StartupWMClass=Chromium-browser`.
+- `/etc/chromium/` contains `chromium.conf`, `master_preferences`, `native-messaging-hosts/` and `policies/`. **`/etc/chromium/policies/managed` does NOT exist**, so the Task 3 policy file must create it. `files/` copies the directory tree, so shipping `files/system/etc/chromium/policies/managed/stream-pilot.json` is enough.
+
+### OBS
+- Binaries: `/usr/bin/obs`, `/usr/bin/obs-ffmpeg-mux`, `/usr/bin/obs-nvenc-test`.
+- Desktop file: `/usr/share/applications/com.obsproject.Studio.desktop` (`Exec=obs`, `StartupWMClass=obs`).
+- Plugins in `/usr/lib64/obs-plugins`: decklink, decklink-captions, decklink-output-ui, frontend-tools, image-source, linux-alsa, linux-capture, linux-jack, linux-pipewire, linux-pulseaudio, linux-v4l2, obs-ffmpeg, obs-filters, obs-libfdk, obs-nvenc, obs-outputs, obs-pwvideo, obs-qsv11, obs-transitions, obs-vst, obs-webkitgtk, obs-webrtc, obs-websocket, rtmp-services, text-freetype2, vlc-video.
+- **obs-ffmpeg (VAAPI): present.** `strings obs-ffmpeg.so | grep -i vaapi` shows the encoder ids `ffmpeg_vaapi_tex`, `hevc_ffmpeg_vaapi_tex`, `av1_ffmpeg_vaapi_tex`, `hevc_ffmpeg_vaapi` and `av1_ffmpeg_vaapi`, plus the "FFmpeg VAAPI H.264 / HEVC / AV1" names and the `h264_vaapi` codec string. The plain H.264 ids are `ffmpeg_vaapi` and `ffmpeg_vaapi_tex`. They don't show up as standalone strings only because the linker merges them as tails of the `av1_`/`hevc_` ids, which is the usual upstream naming. The recipe-side VAAPI driver `iHD_drv_video.so` is in `/usr/lib64/dri`.
+- **obs-qsv11 (QuickSync): present.** Encoder ids: `obs_qsv11`, `obs_qsv11_v2`, `obs_qsv11_soft`, `obs_qsv11_soft_v2`, plus the `_hevc` and `_av1` variants.
+- **obs-x264: there is no `obs-x264.so`** in the RPM, and there is no `obs_x264` encoder id anywhere in `/usr/lib64` or `/usr/share/obs`. Software H.264 comes from the ffmpeg-based `libx264` path inside `obs-ffmpeg.so`, using the negativo17 `ffmpeg-libs` 8.1.3, which has `libx264`. Don't write an OBS profile that sets `StreamEncoder=obs_x264`. Use hardware encoders (`ffmpeg_vaapi_tex` / `obs_qsv11`) or the ffmpeg `libx264` encoder.
+- `obs-nvenc` and `obs-libfdk` are also present and irrelevant on this Intel box.
+
+### Fonts
+- `fc-list | grep DejaVuSans-Bold` finds `/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf` (also `DejaVuSans-BoldOblique.ttf`). `dejavu-sans-fonts` was added to the recipe's install list explicitly.
+
+### greenboot
+- Units: `greenboot-healthcheck.service`, `greenboot-set-rollback-trigger.service`, `greenboot-success.target`, plus a `greenboot-healthcheck.service.d/10-network-online.conf` drop-in.
+- Check dirs: `/etc/greenboot/check/{required.d,wanted.d}` both **exist** (empty), and `/usr/lib/greenboot/check/{required.d,wanted.d}` ship the defaults.
+- `greenboot-default-health-checks` installs `/usr/lib/greenboot/check/required.d/01_repository_dns_check.sh` and `02_watchdog.sh`, and `wanted.d/01_update_platforms_check.sh`. **The DNS check is `required`**, so a PC with no network at boot may be rolled back. Task 4/6 should account for this, e.g. by deciding whether to mask or override it.
