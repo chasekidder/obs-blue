@@ -8,7 +8,31 @@ return exit code 2.
 from __future__ import annotations
 
 import argparse
+import logging
 from collections.abc import Callable
+from pathlib import Path
+
+from .chromium_prep import prep_chromium_profile
+from .config import Config, load_config
+from .seed_obs import seed_obs
+
+log = logging.getLogger("stream_pilot")
+
+# Packaged default OBS profile/scenes (monkeypatched in tests).
+OBS_DEFAULTS_DIR = Path("/usr/share/stream-pilot/obs")
+
+
+def _config_paths() -> list[Path]:
+    # Resolved at call time (not import time) so $HOME is honoured.
+    return [
+        Path("/etc/stream-pilot/config.toml"),
+        Path("~/.config/stream-pilot/site.toml").expanduser(),
+        Path("~/.config/stream-pilot/secrets.toml").expanduser(),
+    ]
+
+
+def _load_config() -> Config:
+    return load_config(_config_paths())
 
 
 def _not_implemented(_args: argparse.Namespace) -> int:
@@ -32,12 +56,33 @@ def cmd_health(args: argparse.Namespace) -> int:
     return _not_implemented(args)
 
 
-def cmd_seed_obs(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+def cmd_seed_obs(_args: argparse.Namespace) -> int:
+    """ExecStartPre for obs.service: must never block OBS except on a broken image."""
+    try:
+        cfg = _load_config()
+        seed_obs(
+            OBS_DEFAULTS_DIR,
+            Path("~/.config/obs-studio").expanduser(),
+            Path("~/.config/stream-pilot/secrets.toml").expanduser(),
+            cfg.cameras,
+        )
+    except FileNotFoundError as exc:
+        log.error("seed-obs: %s", exc)
+        return 1
+    except Exception:
+        log.exception("seed-obs failed; continuing so OBS can still start")
+    return 0
 
 
-def cmd_chromium_prep(args: argparse.Namespace) -> int:
-    return _not_implemented(args)
+def cmd_chromium_prep(_args: argparse.Namespace) -> int:
+    """ExecStartPre for chromium.service: never blocks the unit start."""
+    try:
+        cfg = _load_config()
+        cfg.cdp.user_data_dir.mkdir(parents=True, exist_ok=True)
+        prep_chromium_profile(cfg.cdp.user_data_dir)
+    except Exception:
+        log.exception("chromium-prep failed; continuing")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     args = build_parser().parse_args(argv)
     return args.func(args)
 
