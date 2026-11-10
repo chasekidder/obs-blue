@@ -1,4 +1,7 @@
 import json
+import logging
+import re
+import time
 from pathlib import Path
 
 from stream_pilot.comment_log import Comment, CommentLog, build_report
@@ -209,6 +212,55 @@ def test_rescan_mixed_ids_and_no_ids_align_on_all_keys(tmp_path):
     assert [x["fb_comment_id"] for x in lines(p)][-1] == "s2"
 
 
+def test_rescan_unseen_id_not_dropped_by_key_alignment(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("ann", "sold", "id1"))
+    n = log.ingest_dom([C("ann", "sold", "id1"), C("ann", "sold", "id2")], rescan=True)
+    assert n == 1
+    assert [x["fb_comment_id"] for x in lines(p)] == ["id1", "id2"]
+    assert log.gaps == []
+
+
+def test_rescan_unseen_id_before_aligned_run_is_appended(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("a", "a", "1"), C("b", "b", "2"))
+    n = log.ingest_dom(
+        [C("zz", "zz", "9"), C("a", "a", "1"), C("b", "b", "2")], rescan=True
+    )
+    assert n == 1
+    assert [x["fb_comment_id"] for x in lines(p)] == ["1", "2", "9"]
+    assert log.gaps == []
+
+
+def test_rescan_id_items_append_in_batch_order_with_no_id_items(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("u", "a"), C("u", "b"))
+    # no-ID "a","b" are in the overlap (skipped); ID'd x is unseen -> appended;
+    # no-ID "n" after the overlap is appended; order preserved.
+    n = log.ingest_dom(
+        [C("u", "a"), C("u", "b"), C("u", "x", "X"), C("u", "n")], rescan=True
+    )
+    assert n == 2
+    assert texts(p) == ["a", "b", "x", "n"]
+
+
+def test_rescan_no_id_item_in_overlap_skipped_while_id_item_beside_it_kept(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("u", "a"), C("u", "b"))
+    n = log.ingest_dom([C("u", "new", "N1"), C("u", "a"), C("u", "b")], rescan=True)
+    assert n == 1
+    assert texts(p) == ["a", "b", "new"]
+
+
+def test_rescan_gap_still_appends_id_items_only_if_unseen(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("u", "x", "1"), C("u", "y", "2"))
+    n = log.ingest_dom([C("u", "p", "2"), C("u", "q", "3"), C("u", "r")], rescan=True)
+    assert n == 2
+    assert texts(p) == ["x", "y", "q", "r"]
+    assert len(log.gaps) == 1
+
+
 def test_ssn_never_deduped(tmp_path):
     log, p = make(tmp_path)
     log.append_ssn(C("ann", "sold"))
@@ -271,6 +323,47 @@ def test_restart_tolerates_truncated_last_line(tmp_path):
     assert [x["text"] for x in good] == ["a", "b"]
 
 
+def test_loader_counts_and_warns_about_corrupt_lines(tmp_path, caplog):
+    log, p = make(tmp_path)
+    seed(log, C("u", "a"))
+    with p.open("a") as f:
+        f.write("garbage line\n")
+        f.write("[1]\n")
+    seed_log = CommentLog(p, "live1", FakeClock())
+    assert seed_log.corrupt_lines == 2
+    seed_log.ingest_dom([C("u", "b")], rescan=False)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="stream_pilot.comment_log"):
+        log3 = CommentLog(p, "live1", FakeClock())
+    assert log3.corrupt_lines == 2
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 2
+    msgs = " ".join(r.getMessage() for r in warns)
+    assert "line 2" in msgs and "line 3" in msgs
+    # good records on both sides of the corruption still loaded
+    assert log3.ingest_dom([C("u", "a"), C("u", "b")], rescan=True) == 0
+
+
+def test_clean_file_has_zero_corrupt_lines(tmp_path):
+    log, p = make(tmp_path)
+    assert log.corrupt_lines == 0
+    seed(log, C("u", "a"))
+    assert CommentLog(p, "live1", FakeClock()).corrupt_lines == 0
+
+
+def field(rep: str, name: str) -> int:
+    """Value of a line-anchored `name: N` report header (exact match)."""
+    m = re.findall(rf"^\s*{re.escape(name)}: (\d+)$", rep, re.M)
+    assert len(m) == 1, f"{name!r} header found {len(m)} times in:\n{rep}"
+    return int(m[0])
+
+
+def has_entry(rep: str, who_what: str) -> bool:
+    return any(
+        ln.startswith("  ") and ln.endswith("  " + who_what) for ln in rep.split("\n")
+    )
+
+
 def test_report(tmp_path):
     clock = FakeClock(1000.0)
     log, p = make(tmp_path, clock)
@@ -289,16 +382,24 @@ def test_report(tmp_path):
     log.ingest_dom([C("zed", "p"), C("zed", "q")], rescan=True)
 
     rep = build_report(p)
-    assert "ssn: 2" in rep
-    assert "fb_dom: 4" in rep
-    assert "matched: 1" in rep
-    assert "only in ssn: 1" in rep
-    assert "only in fb_dom: 3" in rep
-    assert "gaps: 1" in rep
-    assert "bob: mine please" in rep
-    assert "cat: taking it" in rep
+    assert field(rep, "ssn") == 2
+    assert field(rep, "fb_dom") == 4
+    assert field(rep, "matched") == 1
+    assert field(rep, "only in ssn") == 1
+    assert field(rep, "only in fb_dom") == 3
+    assert field(rep, "gaps") == 1
+    assert field(rep, "corrupt lines") == 0
+    assert has_entry(rep, "bob: mine please")
+    assert has_entry(rep, "cat: taking it")
     # matched pair is not listed as unmatched
+    assert not has_entry(rep.lower(), "ann: sold")
     assert "ann: sold" not in rep.lower()
+
+
+def test_report_field_helper_is_not_a_substring_match():
+    rep = "  ssn: 20\nonly in ssn: 3\n"
+    assert field(rep, "ssn") == 20
+    assert field(rep, "only in ssn") == 3
 
 
 def test_report_matching_is_one_to_one(tmp_path):
@@ -310,9 +411,9 @@ def test_report_matching_is_one_to_one(tmp_path):
     clock.advance(1)
     log.ingest_dom([C("ann", "sold")], rescan=False)
     rep = build_report(p)
-    assert "only in ssn: 1" in rep
-    assert "only in fb_dom: 0" in rep
-    assert "matched: 1" in rep
+    assert field(rep, "only in ssn") == 1
+    assert field(rep, "only in fb_dom") == 0
+    assert field(rep, "matched") == 1
 
 
 def test_report_window(tmp_path):
@@ -321,11 +422,29 @@ def test_report_window(tmp_path):
     log.append_ssn(C("ann", "sold"))
     clock.advance(300)
     log.ingest_dom([C("ann", "sold")], rescan=False)
-    assert "only in ssn: 1" in build_report(p)
-    assert "only in fb_dom: 1" in build_report(p)
+    rep = build_report(p)
+    assert field(rep, "only in ssn") == 1
+    assert field(rep, "only in fb_dom") == 1
     rep = build_report(p, window_s=600)
-    assert "only in ssn: 0" in rep
-    assert "only in fb_dom: 0" in rep
+    assert field(rep, "only in ssn") == 0
+    assert field(rep, "only in fb_dom") == 0
+
+
+def test_report_picks_closest_unmatched_dom(tmp_path):
+    p = tmp_path / "c.jsonl"
+    write_raw(
+        p,
+        [
+            rec("ssn", 100.0, "ann", "sold"),
+            rec("fb_dom", 20.0, "ann", "sold"),  # inside window, but farther
+            rec("fb_dom", 99.0, "ann", "sold"),  # closest
+        ],
+    )
+    rep = build_report(p, window_s=120)
+    assert field(rep, "matched") == 1
+    assert field(rep, "only in fb_dom") == 1
+    assert "1970-01-01 00:00:20 UTC  ann: sold" in rep
+    assert "1970-01-01 00:01:39 UTC" not in rep
 
 
 def test_report_stable_order_and_empty(tmp_path):
@@ -340,4 +459,75 @@ def test_report_stable_order_and_empty(tmp_path):
 
     empty = tmp_path / "none.jsonl"
     rep0 = build_report(empty)
-    assert "only in ssn: 0" in rep0 and "gaps: 0" in rep0
+    assert field(rep0, "only in ssn") == 0
+    assert field(rep0, "gaps") == 0
+    assert field(rep0, "corrupt lines") == 0
+
+
+def rec(source: str, t: float, author: str, text: str) -> dict:
+    return {
+        "captured_at": t,
+        "created_at": None,
+        "source": source,
+        "fb_comment_id": None,
+        "author": author,
+        "text": text,
+        "live_id": "L",
+    }
+
+
+def write_raw(p: Path, recs: list[dict]) -> None:
+    p.write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+
+def test_report_survives_truncated_utf8_and_counts_corrupt(tmp_path):
+    p = tmp_path / "c.jsonl"
+    write_raw(p, [rec("ssn", 1.0, "ann", "sold")])
+    with p.open("ab") as f:
+        f.write(b'{"source": "ssn", "author": "x", "text": "\xe2\x82')  # cut mid-char
+    rep = build_report(p)
+    assert field(rep, "ssn") == 1
+    assert field(rep, "corrupt lines") == 1
+
+
+def test_report_counts_corrupt_lines_mid_file(tmp_path):
+    p = tmp_path / "c.jsonl"
+    with p.open("w") as f:
+        f.write(json.dumps(rec("ssn", 1.0, "a", "x")) + "\n")
+        f.write("not json at all\n")
+        f.write("\n")  # blank lines are not corrupt
+        f.write("[1, 2]\n")  # valid JSON but not a record
+        f.write(json.dumps(rec("fb_dom", 2.0, "a", "x")) + "\n")
+    rep = build_report(p)
+    assert field(rep, "corrupt lines") == 2
+    assert field(rep, "matched") == 1
+
+
+def test_report_unicode_line_separators_in_text_do_not_split_records(tmp_path):
+    log, p = make(tmp_path)
+    log.append_ssn(C("ann", "a\u2028b\x0bc"))
+    log.ingest_dom([C("ann", "a\u2028b\x0bc")], rescan=False)
+    rep = build_report(p)
+    assert field(rep, "corrupt lines") == 0
+    assert field(rep, "matched") == 1
+
+
+def test_report_scales_to_5000_by_5000(tmp_path):
+    p = tmp_path / "big.jsonl"
+    recs = []
+    for i in range(5000):
+        # a few hot keys (worst case for bucketing) plus many distinct ones
+        who, what = ("ann", "sold") if i % 2 == 0 else (f"u{i}", f"t{i}")
+        recs.append(rec("ssn", float(i), who, what))
+        recs.append(rec("fb_dom", i + 0.5, who, what))
+    recs.append(rec("fb_dom", 9999.0, "extra", "only dom"))
+    write_raw(p, recs)
+    t0 = time.perf_counter()
+    rep = build_report(p)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, f"build_report took {elapsed:.2f}s"
+    assert field(rep, "ssn") == 5000
+    assert field(rep, "fb_dom") == 5001
+    assert field(rep, "matched") == 5000
+    assert field(rep, "only in ssn") == 0
+    assert field(rep, "only in fb_dom") == 1

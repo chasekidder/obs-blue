@@ -7,12 +7,16 @@ Pure stdlib; no dependency on the rest of the package.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,7 @@ class CommentLog:
         self.live_id = live_id
         self._clock = clock
         self.gaps: list[dict] = []
+        self.corrupt_lines = 0
         self._dom_keys: list[tuple[str, str]] = []
         self._seen_ids: set[str] = set()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,12 +72,18 @@ class CommentLog:
             return
         with self.path.open("rb") as f:
             data = f.read()
-        for raw in data.splitlines():
+        for lineno, raw in enumerate(data.splitlines(), start=1):
+            if not raw.strip():
+                continue
             try:
                 rec = json.loads(raw)
             except ValueError:
-                continue  # truncated line from a crash mid-write
+                rec = None
             if not isinstance(rec, dict):
+                self.corrupt_lines += 1
+                log.warning(
+                    "%s: skipping unparseable line %d", self.path, lineno
+                )
                 continue
             src = rec.get("source")
             if src == "fb_dom":
@@ -166,9 +177,14 @@ class CommentLog:
             else:
                 start = found
 
+        # ID'd items: appended iff their ID is unseen, wherever alignment
+        # landed (dedupe by ID only). No-ID items: only those from `start` on.
         n = 0
-        for c in batch[start:]:
-            if self._is_seen(c):
+        for idx, c in enumerate(batch):
+            if c.fb_comment_id:
+                if self._is_seen(c):
+                    continue
+            elif idx < start:
                 continue
             self._append_dom(c)
             n += 1
@@ -192,13 +208,20 @@ def build_report(path: Path, window_s: float = 120.0) -> str:
     ssn: list[dict] = []
     dom: list[dict] = []
     gaps = 0
+    corrupt = 0
     if path.exists():
-        for raw in path.read_bytes().splitlines():
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        # split on "\n" only: str.splitlines() also splits on U+2028 etc.,
+        # which json.dumps(ensure_ascii=False) can emit inside a text field.
+        for raw in text.split("\n"):
+            if not raw.strip():
+                continue
             try:
                 rec = json.loads(raw)
             except ValueError:
-                continue
+                rec = None
             if not isinstance(rec, dict):
+                corrupt += 1
                 continue
             src = rec.get("source")
             if src == "ssn":
@@ -209,7 +232,10 @@ def build_report(path: Path, window_s: float = 120.0) -> str:
                 gaps += 1
 
     def ts(r: dict) -> float:
-        return float(r.get("captured_at") or 0.0)
+        try:
+            return float(r.get("captured_at") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
     def k(r: dict) -> tuple[str, str]:
         return _key(str(r.get("author", "")), str(r.get("text", "")))
@@ -218,25 +244,42 @@ def build_report(path: Path, window_s: float = 120.0) -> str:
     ssn.sort(key=ts)
     dom.sort(key=ts)
 
-    # One-to-one matching: each ssn entry takes the closest unmatched fb_dom
-    # entry with the same key within the window.
-    matched_dom: set[int] = set()
+    # Bucket fb_dom by key once. Each bucket keeps parallel lists (sorted by
+    # time) of timestamps and indices into `dom`; matched entries are deleted.
+    buckets: dict[tuple[str, str], tuple[list[float], list[int]]] = {}
+    for j, d in enumerate(dom):
+        times, idxs = buckets.setdefault(k(d), ([], []))
+        times.append(ts(d))
+        idxs.append(j)
+
+    # One-to-one matching: each ssn entry (in time order) takes the closest
+    # still-unmatched fb_dom entry with the same key within the window
+    # (the earlier one on a tie).
     only_ssn: list[dict] = []
     matched = 0
     for s in ssn:
-        best_j, best_d = None, None
-        for j, d in enumerate(dom):
-            if j in matched_dom or k(d) != k(s):
-                continue
-            dt = abs(ts(d) - ts(s))
-            if dt <= window_s and (best_d is None or dt < best_d):
-                best_j, best_d = j, dt
-        if best_j is None:
+        bucket = buckets.get(k(s))
+        if bucket is None or not bucket[0]:
             only_ssn.append(s)
-        else:
-            matched_dom.add(best_j)
+            continue
+        times, idxs = bucket
+        t = ts(s)
+        pos = bisect_left(times, t)
+        best = None
+        if pos > 0:
+            best = pos - 1
+        if pos < len(times) and (
+            best is None or times[pos] - t < t - times[best]
+        ):
+            best = pos
+        if best is not None and abs(times[best] - t) <= window_s:
+            del times[best]
+            del idxs[best]
             matched += 1
-    only_dom = [d for j, d in enumerate(dom) if j not in matched_dom]
+        else:
+            only_ssn.append(s)
+    remaining = sorted(j for _, idxs in buckets.values() for j in idxs)
+    only_dom = [dom[j] for j in remaining]
 
     def entry(r: dict) -> str:
         return f"  {_fmt_ts(ts(r))}  {r.get('author', '')}: {r.get('text', '')}"
@@ -251,6 +294,7 @@ def build_report(path: Path, window_s: float = 120.0) -> str:
         f"only in ssn: {len(only_ssn)}",
         f"only in fb_dom: {len(only_dom)}",
         f"gaps: {gaps}",
+        f"corrupt lines: {corrupt}",
         "",
         f"== only in ssn ({len(only_ssn)}) ==",
         *[entry(r) for r in only_ssn],
