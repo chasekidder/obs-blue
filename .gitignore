@@ -13,3 +13,4 @@ stream-pilot/.venv/
 **/__pycache__/
 .pytest_cache/
 *.egg-info/
+/.bluebuild-scripts_*
