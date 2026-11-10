@@ -127,7 +127,7 @@ class StreamDeckAdapter:
     def show(self, key: int, face: KeyFace) -> None:
         self._faces[key] = face
         if self._deck is not None:
-            self._render_key(key)
+            self._render_key(key, blink_phase=False)  # start lit, not mid-"off"
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -168,7 +168,8 @@ class StreamDeckAdapter:
         while True:
             if self._deck is None:
                 self._try_connect()
-                await asyncio.sleep(self._enumerate_interval)
+                if self._deck is None:  # only back off while still no deck
+                    await asyncio.sleep(self._enumerate_interval)
             else:
                 await asyncio.sleep(self._blink_interval)
                 self._tick()
@@ -192,7 +193,6 @@ class StreamDeckAdapter:
             self._close_quietly(deck)
             return
         self._deck = deck
-        self._last_error = ""
         self._down.clear()
         self._phase = False
         log.info("stream deck connected")
@@ -200,14 +200,18 @@ class StreamDeckAdapter:
             if self._deck is not deck:  # a render failed and dropped it
                 break
             self._render_key(key)
+        if self._deck is deck:  # full render succeeded: re-arm error logging
+            self._last_error = ""
 
     def _tick(self) -> None:
         deck = self._deck
         if deck is None:
             return
         try:
-            # The library's reader thread closes the deck on a read TransportError.
-            gone = not (deck.is_open() and deck.connected())
+            # The library's reader thread closes the deck on a read TransportError
+            # (unplug), so is_open() suffices. Not connected(): in 0.10.0 that
+            # does a full unfiltered USB enumerate.
+            gone = not deck.is_open()
         except Exception:
             gone = True
         if gone:
@@ -218,7 +222,7 @@ class StreamDeckAdapter:
             if face.blink and self._deck is deck:
                 self._render_key(key)
 
-    def _render_key(self, key: int) -> None:
+    def _render_key(self, key: int, blink_phase: bool | None = None) -> None:
         deck = self._deck
         face = self._faces.get(key)
         if deck is None or face is None:
@@ -226,7 +230,9 @@ class StreamDeckAdapter:
         try:
             with deck:
                 size = deck.key_image_format()["size"]
-                img = render_face(face, size, self._phase)
+                img = render_face(
+                    face, size, self._phase if blink_phase is None else blink_phase
+                )
                 deck.set_key_image(key, self._pil_helper().to_native_key_format(deck, img))
         except Exception as exc:  # TransportError / unplug / bad key index
             self._note_error(f"render key {key} failed", exc)

@@ -139,6 +139,7 @@ class FakeDeck:
         self.fail_set_image = None  # exception to raise from set_key_image
         self.fail_open = None
         self.closed = 0
+        self.connected_calls = 0
         self.close_raises = False
 
     def __enter__(self):
@@ -175,6 +176,7 @@ class FakeDeck:
         return self._open
 
     def connected(self):
+        self.connected_calls += 1
         return self._connected
 
     def close(self):
@@ -198,12 +200,12 @@ class FakeDeviceManager:
 
 
 def make_adapter(manager, **kw):
+    kw.setdefault("enumerate_interval", 0.02)
+    kw.setdefault("blink_interval", 0.02)
     return StreamDeckAdapter(
         DeckCfg(long_press_s=3.0, brightness=40),
         device_manager=manager,
         pil_helper=FakePIL,
-        enumerate_interval=0.02,
-        blink_interval=0.02,
         **kw,
     )
 
@@ -427,3 +429,55 @@ async def test_stop_cancels_task_and_closes_deck():
     await a.stop()
     assert deck.closed >= 1
     assert a._task is None
+
+
+async def test_blink_starts_right_after_connect_despite_long_enumerate_interval(adapters):
+    deck = FakeDeck()
+    a = make_adapter(FakeDeviceManager([deck]), enumerate_interval=30.0, blink_interval=0.02)
+    adapters.append(a)
+    a.show(0, KeyFace("GOING\nLIVE", "#1f5fbf", blink=True))
+    await a.start()
+    await wait_for(lambda: deck.callback is not None, timeout=1.0)
+    n = deck.set_image_calls.count(0)
+    # Several blink writes must follow within a fraction of the 30 s interval.
+    await wait_for(lambda: deck.set_image_calls.count(0) >= n + 3, timeout=1.0)
+
+
+async def test_health_check_does_not_call_connected(adapters):
+    deck = FakeDeck()
+    a = make_adapter(FakeDeviceManager([deck]))
+    adapters.append(a)
+    a.show(0, KeyFace("B", "#1f5fbf", blink=True))
+    await a.start()
+    await wait_for(lambda: deck.set_image_calls.count(0) >= 6)
+    assert deck.connected_calls == 0  # connected() does a full USB enumerate
+
+
+async def test_new_blinking_face_starts_lit_even_in_off_phase(adapters):
+    deck = FakeDeck()
+    a = make_adapter(FakeDeviceManager([deck]), blink_interval=0.05)
+    adapters.append(a)
+    a.show(0, KeyFace("A", "#1f5fbf", blink=True))
+    await a.start()
+    await wait_for(lambda: deck.callback is not None)
+
+    def px(key):
+        return Image.open(BytesIO(deck.images[key])).getpixel((1, 1))
+
+    await wait_for(lambda: px(0) == (0, 0, 0))  # ticker is now in the off phase
+    a.show(1, KeyFace("B", "#1f5fbf", blink=True))
+    assert px(1) == (0x1F, 0x5F, 0xBF)
+
+
+async def test_persistent_render_failure_warns_once(adapters, caplog):
+    deck = FakeDeck()
+    deck.fail_set_image = FakeTransportError("always broken")
+    mgr = FakeDeviceManager([deck])
+    a = make_adapter(mgr)
+    adapters.append(a)
+    a.show(0, KeyFace("X", "#000000"))
+    with caplog.at_level("WARNING", logger="stream_pilot.deck"):
+        await a.start()
+        await wait_for(lambda: mgr.enumerate_calls >= 5)
+    warnings = [r for r in caplog.records if "render key 0 failed" in r.getMessage()]
+    assert len(warnings) == 1
