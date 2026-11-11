@@ -1753,3 +1753,48 @@ async def test_hung_capture_start_does_not_stall_resume(make, monkeypatch, tmp_p
     await rig.c.boot()
     await rig.settle()
     assert rig.c.state == State.LIVE
+
+
+# ------------------------------------------- backoff state is per stream (re-review N2)
+
+
+async def test_reattach_backoff_resets_for_a_new_stream(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_live()
+    cap.is_healthy = False
+    cap._start = Script(RuntimeError("down"))
+    for _ in range(3):  # three failures: the backoff is now 240 s
+        await rig.c.handle(Tick())
+        await rig.settle()
+        clock.t += 1000
+        clock.t -= 995  # stay inside the current backoff window
+    assert rig.c._reattach_failures >= 1
+    # the stream ends (long press) and a new one goes live
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert rig.c._reattach_failures == 0 and rig.c._reattach_next_try == 0.0
+    cap._start = Script(None)
+    cap.is_healthy = True
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.c._reattach_failures == 0 and rig.c._reattach_next_try == 0.0
+    cap.calls.clear()
+    cap.is_healthy = False
+    await rig.c.handle(Tick())  # no leftover backoff: re-attaches at once
+    await rig.settle()
+    assert len(_starts(rig)) == 1
+
+
+async def test_reattach_backoff_resets_on_resume(make, tmp_path):
+    rig = make(obs=FakeObs(active=True))
+    rig.c._reattach_failures = 5
+    rig.c._reattach_next_try = 1e12
+    rig.store.save(Saved("LIVE", "42", str(tmp_path / "s")))
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.c._reattach_failures == 0 and rig.c._reattach_next_try == 0.0

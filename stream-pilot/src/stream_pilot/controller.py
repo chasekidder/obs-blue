@@ -391,8 +391,12 @@ class Controller:
             log.exception("capture.reattach failed (continuing)")
             self._reattach_failed()
         else:
-            self._reattach_failures = 0
-            self._reattach_next_try = 0.0
+            self._reset_reattach_backoff()
+
+    def _reset_reattach_backoff(self) -> None:
+        """Backoff is per stream: a new (or resumed, or ended) stream starts clean."""
+        self._reattach_failures = 0
+        self._reattach_next_try = 0.0
 
     def _reattach_failed(self) -> None:
         self._reattach_failures += 1
@@ -677,6 +681,7 @@ class Controller:
     async def _resume_flow(self) -> None:
         live_id = self.live_id
         assert live_id is not None and self.stream_dir is not None
+        self._reset_reattach_backoff()
         await self._ensure_connected(announce=False)
         while True:
             try:
@@ -721,6 +726,7 @@ class Controller:
         self._mkdir(stream_dir)
         self.live_id = live_id
         self.stream_dir = stream_dir
+        self._reset_reattach_backoff()
         # The stream is live now: persist LIVE (with live_id) before anything else,
         # so a crash resumes instead of re-running setup, and a power/long-press
         # during the steps below runs the normal live end flow (cancelling this flow).
@@ -787,6 +793,7 @@ class Controller:
     # ------------------------------------------------------------------- end
 
     async def _end_flow(self, *, power_off: bool) -> None:
+        self._reset_reattach_backoff()
         await self._bounded_step("stop_stream", self.obs.stop_stream())
         await self._wait_stream_stopped()
 

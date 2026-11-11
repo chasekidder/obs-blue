@@ -50,7 +50,9 @@ class FacebookAdapter:
     async def _ensure_connected(self) -> None:
         """Reconnect after Chromium restarted (``connect`` is idempotent and serialized)."""
         if not self._browser.is_connected:
-            await self._browser.connect()
+            # Shielded: callers run under short bounds (the controller's 5 s preview_lost
+            # check); the reconnect must still finish in the background and not restart.
+            await asyncio.shield(self._browser.connect())
 
     async def _producer_for_dashboard(self) -> Producer:
         """One Producer per dashboard page (a new page, e.g. after a restart, gets a new one)."""
@@ -125,6 +127,7 @@ class CaptureAdapter:
         self._dom_context: object | None = None
         self._log: CommentLog | None = None
         self._ssn_task: asyncio.Task | None = None
+        self._gen = 0  # bumped by stop(): a start() that began earlier must not finish
 
     @property
     def dom_capture(self) -> FbDomCapture | None:
@@ -138,9 +141,15 @@ class CaptureAdapter:
         page = dom.attached_page
         return page is not None and not page.is_closed()
 
+    def _check_gen(self, gen: int) -> None:
+        if gen != self._gen:
+            raise asyncio.CancelledError("capture.stop() ran while capture.start() was in progress")
+
     async def start(self, live_id: str, stream_dir: Path) -> None:
+        gen = self._gen
         if not self._browser.is_connected:
             await self._browser.connect()
+        self._check_gen(gen)
         context = self._browser.context
         if self._dom is None or self._dom_context is not context:
             # One FbDomCapture per BrowserContext: the binding and init script are
@@ -157,10 +166,19 @@ class CaptureAdapter:
         # missing popout never costs comments.
         self._start_ssn()
         page = await self._popout_page(live_id)
+        if gen != self._gen:  # stop() ran meanwhile: leave nothing behind
+            await self._close_page(page)
+            self._check_gen(gen)
         await self._dom.attach(page, comment_log)
+        if gen != self._gen:
+            try:
+                await self._dom.detach()
+            finally:
+                self._check_gen(gen)
 
     async def stop(self) -> None:
         """Detach and stop the SSN listener; the comments file is kept. Safe without a ``start``."""
+        self._gen += 1  # any start() still in flight is now stale
         self._log = None  # the SSN listener drops messages from now on
         dom = self._dom
         if dom is not None:
@@ -177,15 +195,22 @@ class CaptureAdapter:
         await self._close_popouts()
 
     async def _close_popouts(self) -> None:
-        """Close and untrack the comments popout window(s): no pile-up across stream cycles."""
+        """Close the comments popout window(s): no pile-up across stream cycles.
+
+        A page is untracked only once it is closed; one that would not close stays
+        tracked (so it is never mistaken for the dashboard) and is retried next time.
+        """
         for page in list(self._browser.popout_pages):
-            self._browser.untrack_popout(page)
-            if page.is_closed():
-                continue
-            try:
+            await self._close_page(page)
+
+    async def _close_page(self, page) -> None:
+        try:
+            if not page.is_closed():
                 await asyncio.wait_for(page.close(), _CLOSE_POPOUT_S)
-            except Exception as exc:  # TimeoutError included; stop() must never raise
-                log.warning("closing the comments popout failed: %r", exc)
+        except Exception as exc:  # TimeoutError included; never raises
+            log.warning("closing the comments popout failed: %r", exc)
+            return
+        self._browser.untrack_popout(page)
 
     # ---- helpers ------------------------------------------------------------
 

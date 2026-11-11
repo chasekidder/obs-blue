@@ -150,6 +150,7 @@ def make_browser(cfg, pages=None, *, spawn=None) -> tuple[CdpBrowser, FakeContex
     b = CdpBrowser(cfg.cdp, spawn=spawn)
     b.poll_s = 0.005
     b.fallback_wait_s = 0.2
+    b.helper_wait_s = 0.05
     b._bind(FakePlaywright(), fb, ctx)
     return b, ctx, fb
 
@@ -1190,7 +1191,8 @@ async def test_capture_stop_popout_close_is_bounded_and_never_raises(cfg, tmp_pa
     cap = CaptureAdapter(cfg, cdp)
     await cap.start(LIVE_ID, tmp_path)
     await asyncio.wait_for(cap.stop(), 2)
-    assert cdp.popout_pages == []
+    # not closed in time: stays tracked (so it is never mistaken for the dashboard)
+    assert cdp.popout_pages == [popout]
 
     class Boom(FakePage):
         async def close(self):
@@ -1200,3 +1202,215 @@ async def test_capture_stop_popout_close_is_bounded_and_never_raises(cfg, tmp_pa
     cdp.pages.append(boom)
     cdp.track_popout(boom)
     await cap.stop()  # swallowed
+    assert boom in cdp.popout_pages and popout in cdp.popout_pages
+
+
+async def test_capture_stop_untracks_a_popout_only_after_it_closed(cfg, tmp_path, fakes, monkeypatch):
+    monkeypatch.setattr(adapter_mod, "_CLOSE_POPOUT_S", 0.05)
+    cdp = FakeCdp(cfg)
+    popout = FakePage(popout_url())
+    cdp.pages.append(popout)
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path)
+    popout.close_hangs = True
+    await cap.stop()
+    assert cdp.popout_pages == [popout] and not popout.is_closed()
+    popout.close_hangs = False
+    await cap.stop()  # retried: now it closes and is untracked
+    assert popout.is_closed() and cdp.popout_pages == []
+
+
+# ------------------------------------------- stop-generation guard (re-review N1)
+
+
+def _ssn_cfg(cfg):
+    return dataclasses.replace(cfg, ssn=dataclasses.replace(cfg.ssn, enabled=True, session_id="sess"))
+
+
+async def test_start_released_after_stop_while_connecting_leaves_nothing(cfg, tmp_path, fakes):
+    cfg2 = _ssn_cfg(cfg)
+    cdp = FakeCdp(cfg2, connected=False)
+    gate = asyncio.Event()
+    real_connect = cdp.connect
+
+    async def slow_connect():
+        await gate.wait()
+        await real_connect()
+
+    cdp.connect = slow_connect
+    cdp.pages.append(FakePage(popout_url()))
+    cap = CaptureAdapter(cfg2, cdp)
+    task = asyncio.ensure_future(cap.start(LIVE_ID, tmp_path))
+    await asyncio.sleep(0.02)
+    await cap.stop()
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cap._log is None and cap._ssn_task is None
+    assert FakeSsn.instances == [] and not (tmp_path / "comments.jsonl").exists()
+    assert cap.healthy() is False
+
+
+async def test_start_released_after_stop_while_opening_the_popout_closes_it(cfg, tmp_path, fakes):
+    cfg2 = _ssn_cfg(cfg)
+    cdp = FakeCdp(cfg2)
+    gate = asyncio.Event()
+    real_open = cdp.open_app_window
+
+    async def slow_open(url, timeout_s=20):
+        await gate.wait()
+        page = await real_open(url, timeout_s)
+        cdp.track_popout(page)
+        return page
+
+    cdp.open_app_window = slow_open
+    cap = CaptureAdapter(cfg2, cdp)
+    task = asyncio.ensure_future(cap.start(LIVE_ID, tmp_path))
+    await asyncio.sleep(1.2)  # past the popout grace: it is opening one
+    assert len(FakeSsn.instances) == 1  # the SSN task was started before the popout wait
+    await cap.stop()
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cap._log is None and cap._ssn_task is None
+    assert FakeSsn.instances[0].cancelled
+    opened = cdp.pages[-1]
+    assert opened.is_closed() and cdp.popout_pages == []
+    assert FakeDom.instances[0].attaches == []
+
+
+async def test_start_released_after_stop_while_attaching_detaches(cfg, tmp_path, fakes, monkeypatch):
+    gate = asyncio.Event()
+
+    class SlowDom(FakeDom):
+        async def attach(self, page, log):
+            await gate.wait()
+            await super().attach(page, log)
+
+    monkeypatch.setattr(adapter_mod, "FbDomCapture", SlowDom)
+    cdp = FakeCdp(cfg)
+    cdp.pages.append(FakePage(popout_url()))
+    cap = CaptureAdapter(cfg, cdp)
+    task = asyncio.ensure_future(cap.start(LIVE_ID, tmp_path))
+    await asyncio.sleep(0.02)
+    await cap.stop()
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cap.healthy() is False
+    assert FakeDom.instances[0].attached_page is None
+    assert cap._log is None
+
+
+async def test_a_normal_start_after_a_stop_still_works(cfg, tmp_path, fakes):
+    cdp = FakeCdp(cfg)
+    cdp.pages.append(FakePage(popout_url()))
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path / "a")
+    await cap.stop()
+    cdp.pages.append(FakePage(popout_url()))
+    await cap.start(LIVE_ID, tmp_path / "b")
+    assert cap.healthy() is True
+    await cap.stop()
+
+
+# ------------------------------------------- adoption never takes the SSN helper (N4)
+
+
+async def test_open_app_window_never_adopts_a_chrome_error_page(cfg):
+    async def spawn(argv):
+        async def later():
+            await asyncio.sleep(0.01)
+            ctx.pages.append(FakePage("chrome-error://chromewebdata/"))  # the helper failed to load
+
+        asyncio.ensure_future(later())
+
+    b, ctx, fb = make_browser(cfg, [FakePage("about:blank")], spawn=spawn)
+    b.fallback_wait_s = 0.05
+    page = await b.open_app_window(URL, timeout_s=0.1)
+    assert page.url != "chrome-error://chromewebdata/"
+    assert ctx.new_pages == 1
+
+
+async def test_open_app_window_never_adopts_the_remembered_ssn_helper_page(cfg):
+    write_manifest(cfg.cdp.user_data_dir, "1_0", {"action": {"default_popup": "menu.html"}})
+    helper_url = f"chrome-extension://{SSN_EXTENSION_ID}/menu.html"
+
+    async def spawn(argv):
+        pass
+
+    b, ctx, fb = make_browser(cfg, [FakePage("about:blank")], spawn=spawn)
+
+    async def on_send(method, params):
+        if params.get("background"):
+            ctx.pages.append(FakePage("about:blank"))  # helper tab, URL not yet loaded
+
+    fb.on_send = on_send
+    await b._open_ssn_helper()
+    helper = ctx.pages[-1]
+    assert b._helper_pages == [helper]
+    assert helper_url  # (the helper page was created for this URL)
+    b.fallback_wait_s = 0.05
+    page = await b.open_app_window(URL, timeout_s=0.05)
+    assert page is not helper
+
+
+# ------------------------------------------- shielded reconnect, leak-free start (N5)
+
+
+async def test_adapter_reconnect_survives_a_cancel_of_the_caller(cfg, monkeypatch):
+    class P:
+        def __init__(self, page, **kw):
+            pass
+
+        async def preview_lost(self):
+            return False
+
+    monkeypatch.setattr(adapter_mod, "Producer", P)
+    cdp = FakeCdp(cfg, connected=False)
+
+    async def slow_connect():
+        cdp.calls.append(("connect",))
+        await asyncio.sleep(0.1)
+        cdp.connected = True
+
+    cdp.connect = slow_connect
+    fb = FacebookAdapter(cfg, cdp)
+    task = asyncio.ensure_future(fb.preview_lost())
+    await asyncio.sleep(0.02)
+    task.cancel()  # e.g. the controller's 5 s preview_lost bound
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.2)
+    assert cdp.connected is True  # the connect still finished in the background
+    assert cdp.calls == [("connect",)]
+    assert await fb.preview_lost() is False  # next call: already connected
+    assert cdp.calls == [("connect",)]
+
+
+async def test_cancel_during_playwright_start_does_not_leak_the_driver(cfg, monkeypatch):
+    import sys
+    import types
+
+    pw = _FakePw()
+
+    class _Starter:
+        async def start(self):
+            await asyncio.sleep(0.05)
+            return pw
+
+    mod = types.ModuleType("playwright.async_api")
+    mod.async_playwright = lambda: _Starter()
+    pkg = types.ModuleType("playwright")
+    pkg.async_api = mod
+    monkeypatch.setitem(sys.modules, "playwright", pkg)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", mod)
+    b = CdpBrowser(cfg.cdp)
+    task = asyncio.ensure_future(b.connect())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.2)
+    assert pw.stop_called  # the late-started driver was stopped
+    assert not b.is_connected

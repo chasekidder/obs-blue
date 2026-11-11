@@ -49,6 +49,8 @@ CONNECT_TIMEOUT_S = 30.0
 _APP_FALLBACK_WAIT_S = 10.0  # how long a CDP-created window gets to show up
 _POLL_S = 0.2
 _IGNORED_SCHEMES = ("chrome-extension://", "devtools://")
+# Never adopt these as "the window we just opened": a failed-to-load extension page is chrome-error://.
+_NOT_ADOPTABLE_SCHEMES = _IGNORED_SCHEMES + ("chrome-error://",)
 
 # Background reapers for spawned handoff processes (never leave a zombie).
 _REAPERS: set[asyncio.Task] = set()
@@ -172,6 +174,8 @@ class CdpBrowser:
         self._spawn = spawn if spawn is not None else spawn_detached
         self.poll_s = _POLL_S
         self.fallback_wait_s = _APP_FALLBACK_WAIT_S
+        self.helper_wait_s = 2.0  # how long to look for the SSN helper page after creating it
+        self._helper_pages: list["Page"] = []
         self.popout_pages: list["Page"] = []
         self._pw: Any = None
         self._browser: "Browser | None" = None
@@ -207,8 +211,12 @@ class CdpBrowser:
             await self._stop_playwright()
             from playwright.async_api import async_playwright  # lazy: only in the image
 
-            pw = await async_playwright().start()
+            # The driver start runs as its own task: a cancel while it is starting must
+            # not leak the node process (it is stopped as soon as it finished starting).
+            start_task = asyncio.ensure_future(async_playwright().start())
+            pw: Any = None
             try:
+                pw = await asyncio.shield(start_task)
                 browser = await asyncio.wait_for(
                     pw.chromium.connect_over_cdp(self.cfg.url), CONNECT_TIMEOUT_S
                 )
@@ -216,15 +224,33 @@ class CdpBrowser:
             except BaseException:
                 # Bounded and shielded: a hung driver must not make a cancelled or
                 # failed connect (e.g. a capture re-attach) hang its caller.
-                try:
-                    await asyncio.wait_for(asyncio.shield(pw.stop()), CLOSE_TIMEOUT_S)
-                except BaseException:
-                    pass
+                if pw is None:
+                    self._stop_late_driver(start_task)
+                else:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(pw.stop()), CLOSE_TIMEOUT_S)
+                    except BaseException:
+                        pass
                 raise
             self._bind(pw, browser, context)
             self.popout_pages = []
+            self._helper_pages = []
             log.info("connected to Chromium at %s", self.cfg.url)
         await self._open_ssn_helper()
+
+    @staticmethod
+    def _stop_late_driver(start_task: "asyncio.Future") -> None:
+        """Stop a Playwright driver whose start was interrupted, once it has started."""
+
+        def finish(t: "asyncio.Future") -> None:
+            if t.cancelled() or t.exception() is not None:
+                return
+            stopper = asyncio.ensure_future(
+                asyncio.wait_for(t.result().stop(), CLOSE_TIMEOUT_S)
+            )
+            stopper.add_done_callback(lambda f: f.cancelled() or f.exception())
+
+        start_task.add_done_callback(finish)
 
     async def _stop_playwright(self) -> None:
         pw, self._pw = self._pw, None
@@ -310,7 +336,12 @@ class CdpBrowser:
         """
         for page in self._open_pages():
             url = page.url or ""
-            if page in before or page in self.popout_pages or url.startswith(_IGNORED_SCHEMES):
+            if (
+                page in before
+                or page in self.popout_pages
+                or page in self._helper_pages
+                or url.startswith(_NOT_ADOPTABLE_SCHEMES)
+            ):
                 continue
             return page
         return None
@@ -411,9 +442,20 @@ class CdpBrowser:
             marker = f"chrome-extension://{SSN_EXTENSION_ID}/"
             if any((p.url or "").startswith(marker) for p in self._open_pages()):
                 return
+            before = set(self._open_pages())
             session = await self._browser_session()
             await session.send("Target.createTarget", {"url": url, "background": True})
             log.info("opened the SSN helper tab")
+            # Remember its page so the app-window adoption never takes it (its URL may
+            # still be blank, or chrome-error:// if the extension fails to load).
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.helper_wait_s
+            while loop.time() < deadline:
+                new = [p for p in self._open_pages() if p not in before]
+                if new:
+                    self._helper_pages.extend(new)
+                    break
+                await asyncio.sleep(self.poll_s)
         except Exception as exc:
             log.warning("could not open the SSN helper tab: %r", exc)
 
