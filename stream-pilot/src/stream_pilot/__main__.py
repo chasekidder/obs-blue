@@ -47,7 +47,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     except Exception:
         log.exception("run: cannot load config")
         return 1
-    return asyncio.run(run_app(cfg, args.dry_run))
+    record_dir = None
+    if getattr(args, "record", None):
+        record_dir = Path(args.record).expanduser()
+        try:
+            # Captures may contain the stream key: owner-only, like fb/producer.py's files.
+            record_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            record_dir.chmod(0o700)
+        except OSError:
+            log.exception("run: cannot create the --record directory %s", record_dir)
+            return 1
+    return asyncio.run(run_app(cfg, args.dry_run, record_dir=record_dir))
 
 
 def _status_path() -> Path:
@@ -182,6 +192,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="do everything up to, but not including, clicking Go live",
+    )
+    parsers["run"].add_argument(
+        "--record",
+        metavar="DIR",
+        default=None,
+        help="save a screenshot and aria snapshot of every Facebook step into DIR "
+        "(for selector tuning; may contain the stream key, so DIR is made private)",
     )
     parsers["seed-obs"].add_argument(
         "--reset-scenes",

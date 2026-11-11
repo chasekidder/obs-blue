@@ -13,9 +13,11 @@ import signal
 import pytest
 
 from stream_pilot import app
+from stream_pilot.browser import CdpBrowser
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
 from stream_pilot.events import RetryRequested, Tick
+from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
 from stream_pilot.persist import StateStore, StatusWriter
 from stream_pilot.ports import StepFailed
 
@@ -142,11 +144,48 @@ async def test_build_app_default_dry_run_flag(cfg, adapters):
         await close_all(coros)
 
 
-async def test_build_app_defaults_to_not_wired_ports(cfg, adapters):
+async def test_build_app_defaults_to_the_real_browser_adapters(cfg, adapters):
     controller, coros = app.build_app(cfg, dry_run=False)
     try:
-        assert isinstance(controller.fb, app.NotWiredFacebook)
-        assert isinstance(controller.capture, app.NotWiredCapture)
+        assert isinstance(controller.fb, FacebookAdapter)
+        assert isinstance(controller.capture, CaptureAdapter)
+        # one shared browser connection; nothing connects at construction time
+        assert controller.fb._browser is controller.capture._browser
+        assert isinstance(controller.fb._browser, CdpBrowser)
+        assert controller.fb._browser.cfg is cfg.cdp
+        assert not controller.fb._browser.is_connected
+        assert controller.fb._record_dir is None
+    finally:
+        await close_all(coros)
+
+
+async def test_build_app_passes_record_dir_to_the_facebook_adapter(cfg, adapters, tmp_path):
+    controller, coros = app.build_app(cfg, dry_run=False, record_dir=tmp_path / "rec")
+    try:
+        assert controller.fb._record_dir == tmp_path / "rec"
+    finally:
+        await close_all(coros)
+
+
+async def test_build_app_uses_injected_ports_instead_of_real_adapters(cfg, adapters, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("real adapter constructed")
+
+    monkeypatch.setattr(app, "CdpBrowser", boom)
+    fb, cap = FakeFacebook(), FakeCapture()
+    controller, coros = app.build_app(cfg, dry_run=True, facebook=fb, capture=cap)
+    try:
+        assert controller.fb is fb and controller.capture is cap
+    finally:
+        await close_all(coros)
+
+
+async def test_build_app_mixes_one_injected_and_one_real_port(cfg, adapters):
+    cap = FakeCapture()
+    controller, coros = app.build_app(cfg, dry_run=True, capture=cap)
+    try:
+        assert controller.capture is cap
+        assert isinstance(controller.fb, FacebookAdapter)
     finally:
         await close_all(coros)
 
@@ -438,8 +477,9 @@ def patch_build(monkeypatch, controller, extra=()):
     async def forever():
         await asyncio.Event().wait()
 
-    def fake_build(cfg, *, dry_run, facebook=None, capture=None):
+    def fake_build(cfg, *, dry_run, facebook=None, capture=None, record_dir=None):
         fake_build.dry_run = dry_run
+        fake_build.record_dir = record_dir
         return controller, [forever(), *extra]
 
     monkeypatch.setattr(app, "build_app", fake_build)
@@ -447,12 +487,12 @@ def patch_build(monkeypatch, controller, extra=()):
 
 
 @contextlib.asynccontextmanager
-async def running_app(cfg, controller, dry_run=False):
+async def running_app(cfg, controller, dry_run=False, record_dir=None):
     """Run ``run_app`` as a task; always shuts it down (SIGTERM) on exit.
 
     Guarantees a failing assertion cannot leak signal handlers or a live task.
     """
-    task = asyncio.ensure_future(app.run_app(cfg, dry_run))
+    task = asyncio.ensure_future(app.run_app(cfg, dry_run, record_dir=record_dir))
     try:
         await asyncio.wait_for(controller.started.wait(), 2)
         yield task
@@ -481,6 +521,24 @@ async def test_run_app_sigusr1_enqueues_retry_and_sigterm_exits_zero(
         assert await asyncio.wait_for(task, 5) == 0
     assert controller.cancelled
     assert build.dry_run is True
+
+
+async def test_run_app_passes_record_dir_to_build_app(cfg, monkeypatch, restore_signals, tmp_path):
+    controller = FakeController()
+    build = patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller, record_dir=tmp_path / "rec") as task:
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
+    assert build.record_dir == tmp_path / "rec"
+
+
+async def test_run_app_record_dir_defaults_to_none(cfg, monkeypatch, restore_signals):
+    controller = FakeController()
+    build = patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller) as task:
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
+    assert build.record_dir is None
 
 
 async def test_run_app_sigint_also_exits_zero(cfg, monkeypatch, restore_signals):

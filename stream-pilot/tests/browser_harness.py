@@ -127,20 +127,31 @@ def _fetch_version(url: str) -> dict:
         return json.load(resp)
 
 
+class ChromiumUrl(str):
+    """The CDP http URL (a plain ``str``), plus what a second Chromium process needs to
+    hand off to this instance: ``profile_dir`` (its ``--user-data-dir``) and ``env``
+    (the HOME/XDG environment it was launched with)."""
+
+    profile_dir: str
+    env: dict[str, str]
+
+
 @contextlib.asynccontextmanager
-async def headless_chromium(binary: str) -> AsyncIterator[str]:
+async def headless_chromium(binary: str) -> AsyncIterator[ChromiumUrl]:
     """Launch headless Chromium with a temp profile and free debug port; yield the CDP http URL."""
     import asyncio
 
     port = _free_port()
-    url = f"http://127.0.0.1:{port}"
+    url = ChromiumUrl(f"http://127.0.0.1:{port}")
     tmp = tempfile.mkdtemp(prefix="stream-pilot-chromium-")
+    url.profile_dir = os.path.join(tmp, "profile")
+    url.env = _chromium_env(os.path.join(tmp, "home"))
     args = [
         binary,
         "--headless=new",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
-        f"--user-data-dir={os.path.join(tmp, 'profile')}",
+        f"--user-data-dir={url.profile_dir}",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-dev-shm-usage",
@@ -150,7 +161,7 @@ async def headless_chromium(binary: str) -> AsyncIterator[str]:
     args.append("about:blank")
     proc = subprocess.Popen(
         args,
-        env=_chromium_env(os.path.join(tmp, "home")),
+        env=url.env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

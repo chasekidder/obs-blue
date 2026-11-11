@@ -267,20 +267,48 @@ def test_health_cli_config_error_exits_1(home, monkeypatch, capsys):
 def test_run_cli_loads_config_and_runs_app(home, monkeypatch, argv, dry):
     seen = {}
 
-    async def fake_run_app(cfg, dry_run):
+    async def fake_run_app(cfg, dry_run, record_dir=None):
         seen["cfg"] = cfg
         seen["dry_run"] = dry_run
+        seen["record_dir"] = record_dir
         return 7
 
     monkeypatch.setattr(cli, "run_app", fake_run_app)
     monkeypatch.setattr(cli, "load_config", lambda paths: ("cfg", list(paths)))
     assert main(argv) == 7
     assert seen["dry_run"] is dry
+    assert seen["record_dir"] is None
     cfg_marker, paths = seen["cfg"]
     assert cfg_marker == "cfg"
     # paths are resolved at call time, honouring $HOME
     assert paths == cli._config_paths()
     assert paths[1] == home / ".config/stream-pilot/site.toml"
+
+
+def test_run_cli_record_dir_is_expanded_created_and_passed(home, monkeypatch):
+    seen = {}
+
+    async def fake_run_app(cfg, dry_run, record_dir=None):
+        seen["record_dir"] = record_dir
+        return 0
+
+    monkeypatch.setattr(cli, "run_app", fake_run_app)
+    monkeypatch.setattr(cli, "load_config", lambda paths: "cfg")
+    assert main(["run", "--record", "~/rec/one"]) == 0
+    assert seen["record_dir"] == home / "rec" / "one"
+    assert seen["record_dir"].is_dir()
+    assert oct(seen["record_dir"].stat().st_mode & 0o777) == "0o700"  # captures may hold the stream key
+
+
+def test_run_cli_record_dir_that_cannot_be_created_exits_1(home, monkeypatch, caplog):
+    async def fake_run_app(cfg, dry_run, record_dir=None):
+        raise AssertionError("must not run")
+
+    monkeypatch.setattr(cli, "run_app", fake_run_app)
+    monkeypatch.setattr(cli, "load_config", lambda paths: "cfg")
+    (home / "afile").write_text("x")
+    assert main(["run", "--record", str(home / "afile" / "sub")]) == 1
+    assert "record" in caplog.text
 
 
 def test_run_cli_config_error_exits_1(home, monkeypatch, caplog):

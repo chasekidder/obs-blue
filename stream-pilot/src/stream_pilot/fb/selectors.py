@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import re
 
+# ---- Reachability -----------------------------------------------------------
+
+# Any HTTP answer below 500 from here means "Facebook is reachable" (see CdpBrowser.http_reachable).
+REACHABILITY_URL = "https://www.facebook.com/"
+
 # ---- Producer page text (case-insensitive) ---------------------------------
 
 GO_LIVE = re.compile(r"^\s*go live\s*$", re.I)

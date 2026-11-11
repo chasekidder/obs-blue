@@ -1400,3 +1400,142 @@ async def test_setup_flow_never_marks_a_live_ready(rig):
 
 def test_live_states_constant_matches_controller_expectation():
     assert LIVE_STATES == {State.LIVE, State.RECONNECTING}
+
+
+# ------------------------------------------------ capture re-attach on Tick (plan 3 task 6)
+
+
+class HealthCapture(FakeCapture):
+    """FakeCapture with the optional ``healthy()`` probe the adapter provides."""
+
+    def __init__(self, *, healthy: bool = True, health_raises=None, **kw):
+        super().__init__(**kw)
+        self.is_healthy = healthy
+        self.health_raises = health_raises
+
+    async def start(self, live_id, stream_dir) -> None:
+        await super().start(live_id, stream_dir)
+        await self._gated("start")  # FakeCapture itself has no start gate
+
+    def healthy(self) -> bool:
+        self.calls.append(("capture.healthy",))
+        if self.health_raises is not None:
+            raise self.health_raises
+        return self.is_healthy
+
+
+def _starts(rig):
+    return [c for c in rig.capture.calls if c[0] == "capture.start"]
+
+
+async def test_live_tick_reattaches_unhealthy_capture(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    stream_dir = rig.c.stream_dir
+    live_id = rig.c.live_id
+    cap.calls.clear()
+    cap.is_healthy = False  # popout closed (Chromium crash/restart)
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert _starts(rig) == [("capture.start", live_id, stream_dir)]
+    assert rig.c.state == State.LIVE
+
+
+async def test_live_tick_does_not_reattach_healthy_capture(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.calls.clear()
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert _starts(rig) == []
+    assert cap.calls == [("capture.healthy",)]
+
+
+async def test_live_tick_without_healthy_probe_does_not_reattach(rig):
+    await rig.to_live()
+    rig.capture.calls.clear()
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.capture.calls == []
+
+
+async def test_reconnecting_tick_also_reattaches_capture(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    rig.c.state = State.RECONNECTING
+    cap.calls.clear()
+    cap.is_healthy = False
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert len(_starts(rig)) == 1
+
+
+async def test_reattach_failure_never_reaches_the_controller(make, caplog):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.calls.clear()
+    cap.is_healthy = False
+    cap._start = Script([RuntimeError("no popout"), RuntimeError("still none")])
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert "capture.reattach failed" in caplog.text
+    await rig.c.handle(Tick())  # retried once per Tick
+    await rig.settle()
+    assert len(_starts(rig)) == 2
+    assert rig.c.state == State.LIVE
+
+
+async def test_health_probe_error_is_ignored(make):
+    cap = HealthCapture(healthy=True, health_raises=RuntimeError("probe"))
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.calls.clear()
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert _starts(rig) == []
+    assert rig.c.state == State.LIVE
+
+
+async def test_only_one_reattach_runs_at_a_time(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.calls.clear()
+    cap.is_healthy = False
+    cap.gates["start"] = asyncio.Event()  # reattach hangs
+    await rig.c.handle(Tick())
+    await rig.wait_call(cap, "capture.start")
+    await rig.c.handle(Tick())
+    await rig.c.handle(Tick())
+    assert len(_starts(rig)) == 1
+    await rig.c.aclose()  # cancels the hung re-attach
+
+
+async def test_end_flow_cancels_a_pending_reattach(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.calls.clear()
+    cap.is_healthy = False
+    cap.gates["start"] = asyncio.Event()
+    await rig.c.handle(Tick())
+    await rig.wait_call(cap, "capture.start")
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert ("capture.stop",) in cap.calls
+    assert rig.c._reattach is None or rig.c._reattach.done()
+
+
+async def test_ready_tick_never_probes_capture(make):
+    cap = HealthCapture(healthy=False)
+    rig = make(capture=cap)
+    await rig.to_ready()
+    cap.calls.clear()
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert cap.calls == []

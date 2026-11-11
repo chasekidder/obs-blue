@@ -22,10 +22,12 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from .browser import CdpBrowser
 from .config import Config
 from .controller import Controller
 from .deck import StreamDeckAdapter
 from .events import RetryRequested, Tick
+from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .memory import MemoryGuard
 from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
@@ -48,7 +50,7 @@ def _not_wired() -> StepFailed:
 
 
 class NotWiredFacebook:
-    """Placeholder until the browser adapter lands (plan 3).
+    """Placeholder port (``build_app`` now wires the real browser adapters).
 
     Every operation raises ``StepFailed("facebook", "not wired")`` except the
     ones the controller needs to stay usable: ``connect`` (so STARTING can be
@@ -147,8 +149,22 @@ def build_app(
     dry_run: bool,
     facebook: FacebookPort | None = None,
     capture: CommentCapturePort | None = None,
+    record_dir: Path | None = None,
 ) -> tuple[Controller, list[Awaitable]]:
-    """Build the controller with real adapters; return it plus background coroutines."""
+    """Build the controller with real adapters; return it plus background coroutines.
+
+    When ``facebook`` / ``capture`` are None they are the CDP browser adapters
+    sharing one ``CdpBrowser`` (constructing it connects to nothing: the
+    controller calls ``facebook.connect()``). ``record_dir`` makes the
+    Facebook flows save screenshots/aria snapshots there (``run --record``).
+    """
+    browser: CdpBrowser | None = None
+    if facebook is None or capture is None:
+        browser = CdpBrowser(cfg.cdp)
+    if facebook is None:
+        facebook = FacebookAdapter(cfg, browser, record_dir=record_dir)
+    if capture is None:
+        capture = CaptureAdapter(cfg, browser)
     obs = SimpleObsClient(cfg.obs)
     deck = StreamDeckAdapter(cfg.deck)
     power = PowerKeyListener()
@@ -159,8 +175,8 @@ def build_app(
     controller = Controller(
         cfg,
         obs=obs,
-        fb=facebook if facebook is not None else NotWiredFacebook(),
-        capture=capture if capture is not None else NotWiredCapture(),
+        fb=facebook,
+        capture=capture,
         deck=deck,
         system=system,
         camera=camera,
@@ -195,14 +211,14 @@ async def _run_controller(
         cancel_all()
 
 
-async def run_app(cfg: Config, dry_run: bool) -> int:
+async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) -> int:
     """Run the controller until SIGTERM/SIGINT (exit 0) or a controller crash (exit 1)."""
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
         format="%(levelname)s %(name)s: %(message)s",
     )
-    controller, background = build_app(cfg, dry_run=dry_run)
+    controller, background = build_app(cfg, dry_run=dry_run, record_dir=record_dir)
     loop = asyncio.get_running_loop()
     failures: list[str] = []
     tasks: list[asyncio.Task] = []

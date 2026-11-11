@@ -63,6 +63,9 @@ INLINE_TIMEOUT_S = 5.0
 # Upper bound for each adapter call in the end flow / power-off flow: a hung
 # adapter must never keep system.poweroff() from running.
 END_STEP_TIMEOUT_S = 15.0
+# Upper bound for one capture re-attach (it may reconnect Chromium and reopen the
+# comments popout); it runs in its own task, so it never blocks handle().
+REATTACH_TIMEOUT_S = 90.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -121,6 +124,7 @@ class Controller:
         self._fb_ok = False
         self._flow: asyncio.Task | None = None
         self._restart: asyncio.Task | None = None
+        self._reattach: asyncio.Task | None = None
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_camera: str | None = None
@@ -197,6 +201,7 @@ class Controller:
 
     async def aclose(self) -> None:
         """Cancel background tasks (shutdown / test teardown)."""
+        await self._cancel(self._reattach)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
 
@@ -204,7 +209,9 @@ class Controller:
         """Test helper: wait for the flow task and the restart loop to finish."""
         while True:
             pending = {
-                t for t in (self._flow, self._restart) if t is not None and not t.done()
+                t
+                for t in (self._flow, self._restart, self._reattach)
+                if t is not None and not t.done()
             }
             if not pending:
                 return
@@ -279,6 +286,7 @@ class Controller:
             await self._start_flow(self._shutdown_flow, enter=State.ENDING)
 
     async def _begin_end(self, *, power_off: bool) -> None:
+        await self._cancel(self._reattach)
         await self._cancel(self._restart)
         self._power_after_end = False
         self._end_mode = "power" if power_off else "end"
@@ -315,19 +323,56 @@ class Controller:
                 await self._start_flow(
                     lambda: self._setup_flow("SETUP"), enter=State.SETUP
                 )
-        elif self.state == State.LIVE:
-            # Plan 3 hook: if the capture object has a healthy() method, poll it
-            # here (hasattr check) and surface capture problems on the deck.
-            try:
-                active = await self._bounded("stream_active", self.obs.stream_active())
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                log.debug("stream_active poll failed: %r", exc)
+        elif self.state in LIVE_STATES:
+            self._maybe_reattach_capture()
+            if self.state == State.LIVE:
+                await self._poll_obs_while_live()
+
+    async def _poll_obs_while_live(self) -> None:
+        try:
+            active = await self._bounded("stream_active", self.obs.stream_active())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.debug("stream_active poll failed: %r", exc)
+            return
+        if not active and self.state == State.LIVE:
+            log.warning("OBS stream inactive while LIVE; restarting it")
+            self._obs_gave_up()
+
+    def _maybe_reattach_capture(self) -> None:
+        """Re-run ``capture.start`` when the capture reports itself unhealthy.
+
+        Only for capture objects that provide ``healthy()`` (the browser
+        adapter: its popout page closed, e.g. a Chromium crash/restart). The
+        attempt runs in its own task (it may reconnect and reopen the popout),
+        at most one at a time, so a Tick can never be held up by it.
+        """
+        probe = getattr(self.capture, "healthy", None)
+        if probe is None or not self._flow_idle():
+            return
+        if self._reattach is not None and not self._reattach.done():
+            return
+        live_id, stream_dir = self.live_id, self.stream_dir
+        if live_id is None or stream_dir is None:
+            return
+        try:
+            if probe():
                 return
-            if not active and self.state == State.LIVE:
-                log.warning("OBS stream inactive while LIVE; restarting it")
-                self._obs_gave_up()
+        except Exception:
+            log.exception("capture.healthy failed (ignored)")
+            return
+        log.warning("comment capture is not attached; re-attaching to live %s", live_id)
+        self._reattach = asyncio.get_running_loop().create_task(
+            self._reattach_capture(live_id, stream_dir)
+        )
+
+    async def _reattach_capture(self, live_id: str, stream_dir: Path) -> None:
+        await self._best_effort(
+            "capture.reattach",
+            self.capture.start(live_id, stream_dir),
+            REATTACH_TIMEOUT_S,
+        )
 
     @staticmethod
     async def _bounded(name: str, aw: Awaitable):
