@@ -1,0 +1,359 @@
+"""DOM comment capture in headless Chromium (fixture page only, never facebook.com).
+
+The fixture renders its initial list asynchronously (two chunks, like React),
+so these tests exercise the watcher's settle window, rescan/live
+classification and the Python-side routing end to end through a Playwright
+binding.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+
+from stream_pilot.comment_log import CommentLog
+from stream_pilot.fb.comments import FbDomCapture
+
+pytestmark = pytest.mark.browser
+
+LIVE_ID = "1122334455667788"
+SEED = [
+    ("Ann", "Is the lamp still available?"),
+    ("Bob", "sold?"),
+    ("Cara", "How much for the chair?"),
+    ("Dan", "Can I pick up tomorrow"),
+]
+SETTLE_GRACE = 1.5  # > debounce (0.25 s) and, after reloads, comfortably past the fixture's chunks
+
+
+def rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [r for r in out if r.get("source") == "fb_dom"]
+
+
+def pairs(path: Path) -> list[tuple[str, str]]:
+    return [(r["author"], r["text"]) for r in rows(path)]
+
+
+async def wait_until(pred, timeout: float = 8.0, what: str = "condition") -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+class Env:
+    def __init__(self, context, page, log: CommentLog, cap: FbDomCapture, base: str):
+        self.context, self.page, self.log, self.cap, self.base = context, page, log, cap, base
+
+    @property
+    def path(self) -> Path:
+        return self.log.path
+
+    async def wait_rescans(self, n: int) -> None:
+        await wait_until(lambda: self.cap.counts["rescan"] >= n, what=f"{n} rescan(s)")
+
+    async def ready(self) -> None:
+        await self.page.wait_for_function("window.__fixtureReady === true")
+
+
+@pytest_asyncio.fixture
+async def env(pw_browser, fixture_base_url, tmp_path):
+    context = await pw_browser.new_context()
+    await context.add_init_script("window.__spForceWatch = true")
+    page = await context.new_page()
+    await page.goto(f"{fixture_base_url}/comments_popout.html")  # already loaded: attach must reload
+    log = CommentLog(tmp_path / "comments.jsonl", LIVE_ID)
+    cap = FbDomCapture(context)
+    await cap.attach(page, log)
+    e = Env(context, page, log, cap, fixture_base_url)
+    await e.wait_rescans(1)
+    await e.ready()
+    yield e
+    await cap.detach()
+    await context.close()
+
+
+async def test_initial_rescan_logs_every_fixture_comment_once(env):
+    # the list renders in two chunks; the settle window must wait for both
+    assert pairs(env.path) == SEED
+    first = rows(env.path)[0]
+    assert (first["fb_comment_id"], first["author"], first["text"]) == ("9988776655443300", "Ann", SEED[0][1])
+    assert rows(env.path)[1]["fb_comment_id"] is None
+    assert all(r["live_id"] == LIVE_ID for r in rows(env.path))
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path) == SEED, "nothing may be appended after the settle window"
+    assert env.cap.counts["hello"] >= 1
+    assert env.cap.counts["live"] == 0
+
+
+async def test_same_author_same_text_twice_logs_two_more(env):
+    await env.page.evaluate("window.__addComment('Eve', 'sold', false)")
+    await env.page.evaluate("window.__addComment('Eve', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 6, what="two repeat claims")
+    assert pairs(env.path)[4:] == [("Eve", "sold"), ("Eve", "sold")]
+    await asyncio.sleep(SETTLE_GRACE)
+    assert len(rows(env.path)) == 6
+
+
+async def test_burst_in_one_debounce_window_keeps_dom_order(env):
+    await env.page.evaluate(
+        "for (const t of ['one','two','three']) window.__addComment('Fay', t, false)"
+    )
+    await wait_until(lambda: len(rows(env.path)) == 7, what="burst")
+    assert [t for _, t in pairs(env.path)[4:]] == ["one", "two", "three"]
+
+
+async def test_reload_and_reload_with_fewer_comments_duplicates_nothing(env):
+    await env.page.evaluate("window.__addComment('Eve', 'sold', false)")
+    await env.page.evaluate("window.__addComment('Eve', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 6)
+    before = env.cap.counts["rescan"]
+    await env.page.reload()
+    await env.wait_rescans(before + 1)
+    assert len(rows(env.path)) == 6
+    before = env.cap.counts["rescan"]
+    await env.page.evaluate("window.__reloadWith(3)")
+    await env.wait_rescans(before + 1)
+    await asyncio.sleep(0.5)
+    assert len(rows(env.path)) == 6
+    assert pairs(env.path)[:4] == SEED
+
+
+async def test_unchanged_reload_appends_nothing(env):
+    for _ in range(2):
+        before = env.cap.counts["rescan"]
+        await env.page.reload()
+        await env.wait_rescans(before + 1)
+    await asyncio.sleep(0.5)
+    assert pairs(env.path) == SEED
+
+
+async def test_comment_with_id_rerendered_after_reload_is_not_duplicated(env):
+    await env.page.evaluate("window.__addComment('Gus', 'mine!', true)")
+    await wait_until(lambda: len(rows(env.path)) == 5)
+    assert rows(env.path)[4]["fb_comment_id"] is not None
+    before = env.cap.counts["rescan"]
+    await env.page.reload()
+    await env.wait_rescans(before + 1)
+    await asyncio.sleep(0.5)
+    assert len(rows(env.path)) == 5
+
+
+async def test_two_id_comments_get_distinct_ids_and_are_both_logged(env):
+    # fixture IDs exceed 2^53: they must stay distinct (BigInt arithmetic)
+    await env.page.evaluate("window.__addComment('Gus', 'mine!', true)")
+    await env.page.evaluate("window.__addComment('Hana', 'mine too!', true)")
+    await wait_until(lambda: len(rows(env.path)) == 6, what="two ID'd comments")
+    ids = [r["fb_comment_id"] for r in rows(env.path)[4:]]
+    assert all(ids) and len(set(ids)) == 2
+    assert [a for a, _ in pairs(env.path)[4:]] == ["Gus", "Hana"]
+
+
+async def test_id_dedupe_alone_prevents_duplicates_when_alignment_cannot(env):
+    await env.page.evaluate("window.__addComment('Gus', 'mine!', true)")
+    await env.page.evaluate("window.__addComment('Eve', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 6)
+    before = env.cap.counts["rescan"]
+    # the reloaded page shows only the ID'd comments [Ann, Cara, Gus]: they do not align
+    # with the log's tail [Dan, Gus, Eve], so only ID dedupe can keep them out
+    await env.page.evaluate("window.__reloadOnlyWithIds()")
+    await env.wait_rescans(before + 1)
+    await asyncio.sleep(0.5)
+    assert len(rows(env.path)) == 6
+    assert env.log.gaps, "alignment found no overlap, so ID dedupe is what prevented duplicates"
+
+
+async def test_binding_survives_reload(env):
+    before = env.cap.counts["rescan"]
+    await env.page.reload()
+    await env.wait_rescans(before + 1)
+    await env.ready()
+    await env.page.evaluate("window.__addComment('Hal', 'after reload', false)")
+    await wait_until(lambda: ("Hal", "after reload") in pairs(env.path), what="live comment after reload")
+    assert len(rows(env.path)) == 5
+
+
+async def test_prepended_older_comments_do_not_duplicate_history(env):
+    await env.page.evaluate("window.__prependOlder(3, false)")
+    await env.wait_rescans(2)  # an insertion before reported items forces a full rescan
+    await asyncio.sleep(0.5)
+    assert pairs(env.path) == SEED
+    # and live comments keep flowing afterwards
+    await env.page.evaluate("window.__addComment('Ivy', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 5)
+    assert pairs(env.path)[4] == ("Ivy", "sold")
+
+
+async def test_whole_list_replaced_is_a_rescan_not_live_and_duplicates_nothing(env):
+    # every node replaced by a clone, one with slightly different text: no previously
+    # reported article is still connected, so a "live" batch would re-append history
+    await env.page.evaluate("window.__replaceAll(1)")
+    await env.wait_rescans(2)
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path) == SEED
+    assert env.cap.counts["live"] == 0
+    # and live capture keeps working afterwards
+    await env.page.evaluate("window.__addComment('Ivy', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 5)
+    assert pairs(env.path)[4] == ("Ivy", "sold")
+
+
+async def test_identical_whole_list_rerender_appends_nothing(env):
+    await env.page.evaluate("window.__replaceAll(-1)")
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path) == SEED
+
+
+async def test_text_that_fills_in_late_is_logged_once_with_the_final_text(env):
+    # body still empty at the first debounce window (250 ms), filled at ~350 ms
+    await env.page.evaluate("window.__addSlowComment('Slow', 'final text', 350)")
+    await wait_until(lambda: any(a == "Slow" for a, _ in pairs(env.path)), what="slow comment")
+    await asyncio.sleep(SETTLE_GRACE)
+    assert [p for p in pairs(env.path) if p[0] == "Slow"] == [("Slow", "final text")]
+    assert len(rows(env.path)) == 5
+
+
+async def test_comment_that_stays_empty_is_reported_after_the_extra_window(env):
+    t0 = time.monotonic()
+    await env.page.evaluate("window.__addComment('Stick', '', false)")  # e.g. a sticker
+    await wait_until(lambda: len(rows(env.path)) == 5, what="empty-text comment")
+    assert time.monotonic() - t0 >= 0.45, "deferred by one extra debounce window"
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path)[4:] == [("Stick", "")]
+
+
+async def test_rerendered_last_node_appends_nothing(env):
+    await env.page.evaluate("window.__rerenderLast()")
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path) == SEED
+    assert env.cap.counts["live"] == 0
+
+
+async def test_rerender_does_not_swallow_a_real_repeat_in_the_same_window(env):
+    await env.page.evaluate("window.__addComment('Zed', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 5)
+    await env.page.evaluate("window.__rerenderLast(); window.__addComment('Zed', 'sold', false)")
+    await wait_until(lambda: len(rows(env.path)) == 6, what="real repeat")
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path)[4:] == [("Zed", "sold"), ("Zed", "sold")]
+
+
+async def test_second_capture_on_the_same_context_attaches_and_captures(env, tmp_path):
+    cap2 = FbDomCapture(env.context)  # same context: must reuse the one binding/init script
+    log2 = CommentLog(tmp_path / "second.jsonl", "2222222222222222")
+    await cap2.attach(env.page, log2)  # loaded page: reloads, rescan fills log2
+    await wait_until(lambda: cap2.counts["rescan"] >= 1, what="rescan via the second capture")
+    await env.ready()
+    assert pairs(log2.path) == SEED
+    assert cap2.attached_page is env.page and env.cap.attached_page is None
+    await env.page.evaluate("window.__addComment('Kay', 'second handle', false)")
+    await wait_until(lambda: ("Kay", "second handle") in pairs(log2.path), what="live via the second capture")
+    # the first handle's routing was replaced: its log gets nothing more
+    assert pairs(env.path) == SEED
+    # and attaching the first handle again takes the routing back
+    before = env.cap.counts["rescan"]
+    await env.cap.attach(env.page, env.log)
+    await env.wait_rescans(before + 1)
+    await env.ready()
+    await env.page.evaluate("window.__addComment('Lou', 'first again', false)")
+    await wait_until(lambda: ("Lou", "first again") in pairs(env.path), what="live via the first capture")
+    assert ("Lou", "first again") not in pairs(log2.path)
+
+
+async def test_detach_stops_routing(env):
+    await env.cap.detach()
+    assert env.cap.attached_page is None
+    await env.page.evaluate("window.__addComment('Jo', 'ignored', false)")
+    await asyncio.sleep(SETTLE_GRACE)
+    assert pairs(env.path) == SEED
+
+
+async def test_messages_from_a_stale_page_are_dropped(env, tmp_path):
+    page2 = await env.context.new_page()
+    await page2.goto(f"{env.base}/comments_popout.html")
+    log2 = CommentLog(tmp_path / "second.jsonl", "2222222222222222")
+    await env.cap.attach(page2, log2)  # replaces the first page
+    assert env.cap.attached_page is page2
+    await wait_until(lambda: len(rows(log2.path)) == 4, what="new page capture")
+    # the old page is still open and still running its watcher
+    await env.page.evaluate("window.__addComment('Old', 'stale', false)")
+    await page2.wait_for_function("window.__fixtureReady === true")
+    await page2.evaluate("window.__addComment('New', 'fresh', false)")
+    await wait_until(lambda: ("New", "fresh") in pairs(log2.path))
+    await asyncio.sleep(SETTLE_GRACE)
+    assert ("Old", "stale") not in pairs(log2.path)
+    assert ("Old", "stale") not in pairs(env.path)
+    assert len(rows(env.path)) == 4
+
+
+async def test_last_message_at_and_attached_page(env):
+    assert env.cap.attached_page is env.page
+    t = env.cap.last_message_at
+    assert t is not None and time.monotonic() - t < 30
+
+
+async def test_comments_path_activates_without_force_flag(pw_browser, fixture_base_url, tmp_path):
+    context = await pw_browser.new_context()  # no __spForceWatch
+    try:
+        page = await context.new_page()
+        log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
+        cap = FbDomCapture(context)
+        await cap.attach(page, log)  # about:blank: nothing to reload
+        await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/")
+        await wait_until(lambda: len(rows(log.path)) == 4, what="rescan on COMMENTS path")
+        assert pairs(log.path) == SEED
+    finally:
+        await context.close()
+
+
+async def test_other_pages_are_ignored_without_force_flag(pw_browser, fixture_base_url, tmp_path):
+    context = await pw_browser.new_context()
+    try:
+        page = await context.new_page()
+        log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
+        cap = FbDomCapture(context)
+        await cap.attach(page, log)
+        await page.goto(f"{fixture_base_url}/comments_popout.html")  # not a /COMMENTS path
+        await asyncio.sleep(SETTLE_GRACE + 1.5)
+        assert sum(cap.counts.values()) == 0
+        assert rows(log.path) == []
+    finally:
+        await context.close()
+
+
+async def test_empty_page_reports_alive_then_late_comments_arrive_as_rescan(pw_browser, fixture_base_url, tmp_path):
+    context = await pw_browser.new_context()
+    await context.add_init_script("window.__spForceWatch = true")
+    try:
+        page = await context.new_page()
+        log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
+        cap = FbDomCapture(context)
+        await cap.attach(page, log)
+        await page.goto(f"{fixture_base_url}/producer_start.html")  # forced, but has no articles
+        await wait_until(lambda: cap.counts["rescan"] == 1, timeout=15, what="empty rescan after 10 s")
+        assert rows(log.path) == []
+        await page.evaluate(
+            """() => { for (const [a, t] of [['Kim','late one'],['Lee','late two']]) {
+                 const el = document.createElement('div');
+                 el.setAttribute('role', 'article');
+                 el.setAttribute('aria-label', 'Comment by ' + a + ' just now');
+                 el.textContent = a + ' ' + t;
+                 document.body.append(el);
+            } }"""
+        )
+        await wait_until(lambda: cap.counts["rescan"] == 2, timeout=8, what="late rescan")
+        assert cap.counts["live"] == 0
+        assert [a for a, _ in pairs(log.path)] == ["Kim", "Lee"]
+        assert [t for _, t in pairs(log.path)] == ["late one", "late two"]
+    finally:
+        await context.close()

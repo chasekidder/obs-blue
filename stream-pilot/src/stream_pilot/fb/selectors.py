@@ -205,3 +205,18 @@ def group_name_pattern(group_name: str) -> re.Pattern:
     if not name:
         raise ValueError("group name must not be empty")
     return re.compile(re.escape(name), re.I)
+
+
+# ---- Comment watcher (rendered into fb/watcher.js by fb/comments.py) -------
+
+# The comments popout lives under a URL path containing this marker.
+COMMENTS_PATH_MARKER = "/COMMENTS"
+COMMENT_LABEL_ATTR = "aria-label"
+# The commenter's profile link inside a comment (first one whose text is the author).
+COMMENT_AUTHOR_LINK_SELECTOR = "a[role='link']"
+# Permalink carrying the comment id; excluded from the comment text.
+COMMENT_PERMALINK_SELECTOR = "a[href*='comment_id=']"
+# Timestamp elements (also excluded from the comment text) and where their value lives.
+COMMENT_TIME_SELECTOR = "abbr[data-utime], time[datetime]"
+COMMENT_TIME_UTIME_ATTR = "data-utime"
+COMMENT_TIME_DATETIME_ATTR = "datetime"

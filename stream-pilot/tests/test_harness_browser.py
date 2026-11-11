@@ -81,6 +81,7 @@ async def test_comments_fixture_add_and_reload(pw_browser, fixture_base_url):
     context = pw_browser.contexts[0] if pw_browser.contexts else await pw_browser.new_context()
     page = await context.new_page()
     await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/")
+    await page.wait_for_function("window.__fixtureReady === true", timeout=5000)
     articles = page.locator(selectors.COMMENT_ARTICLE_SELECTOR)
     assert await articles.count() == 4
     label = await articles.first.get_attribute("aria-label")
@@ -89,5 +90,6 @@ async def test_comments_fixture_add_and_reload(pw_browser, fixture_base_url):
     assert await articles.count() == 5
     async with page.expect_navigation():
         await page.evaluate("window.__reloadWith(2)")
+    await page.wait_for_function("window.__fixtureReady === true", timeout=5000)
     assert await articles.count() == 2
     assert "Eve" in (await articles.last.get_attribute("aria-label"))

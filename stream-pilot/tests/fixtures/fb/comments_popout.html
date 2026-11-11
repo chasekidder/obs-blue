@@ -12,12 +12,20 @@ if (!comments) {
     ['Bob', 'sold?', false],
     ['Cara', 'How much for the chair?', true],
     ['Dan', 'Can I pick up tomorrow', false],
-  ].map(([author, text, withId], i) => ({ author, text, id: withId ? String(9988776655443300 + i) : null }));
+  // IDs exceed 2^53, so all ID arithmetic is BigInt (Number would collapse them).
+  ].map(([author, text, withId], i) => ({ author, text, id: withId ? String(9988776655443300n + BigInt(i)) : null }));
   sessionStorage.setItem(KEY, JSON.stringify(comments));
 }
-let nextId = Math.max(9988776655443399, ...comments.map((c) => Number(c.id) || 0)) + 1;
+let nextId = 9988776655443400n;
+for (const c of comments) if (c.id && BigInt(c.id) >= nextId) nextId = BigInt(c.id) + 1n;
+let olderCount = 0;
+const list = document.getElementById('list');
 
-function render(c) {
+function save() {
+  sessionStorage.setItem(KEY, JSON.stringify(comments));
+}
+
+function build(c) {
   const el = document.createElement('div');
   el.setAttribute('role', 'article');
   el.setAttribute('aria-label', 'Comment by ' + c.author + ' 1 minute ago');
@@ -35,19 +43,75 @@ function render(c) {
     p.textContent = '1m';
     el.append(p);
   }
-  document.getElementById('list').append(el);
+  return el;
 }
-comments.forEach(render);
+
+// Mimic React: the initial list appears after DOMContentLoaded, in two chunks.
+// (chunk 2 reads `comments` when it runs, so nothing added meanwhile is lost)
+window.__fixtureReady = false;
+const half = Math.ceil(comments.length / 2);
+setTimeout(() => comments.slice(0, half).forEach((c) => list.append(build(c))), 300);
+setTimeout(() => {
+  comments.slice(half).forEach((c) => list.append(build(c)));
+  window.__fixtureReady = true;
+}, 600);
 
 window.__addComment = (author, text, withId) => {
   const c = { author, text, id: withId ? String(nextId++) : null };
   comments.push(c);
-  sessionStorage.setItem(KEY, JSON.stringify(comments));
-  render(c);
+  save();
+  if (window.__fixtureReady) list.append(build(c));
 };
 window.__reloadWith = (n) => {
   sessionStorage.setItem(KEY, JSON.stringify(n > 0 ? comments.slice(-n) : []));
   location.reload();
+};
+// Facebook-style "load more": n older comments appear at the top of the list.
+window.__prependOlder = (n, withId) => {
+  const older = [];
+  for (let i = 0; i < n; i++) {
+    olderCount += 1;
+    older.push({
+      author: 'Older' + olderCount,
+      text: 'older comment ' + olderCount,
+      id: withId ? String(9988776655443000n - BigInt(olderCount)) : null,
+    });
+  }
+  comments = older.concat(comments);
+  save();
+  const frag = document.createDocumentFragment();
+  older.forEach((c) => frag.append(build(c)));
+  list.prepend(frag);
+};
+// Reload showing only the comments that have an ID (alignment cannot match them
+// against the end of the log; only ID dedupe can prevent duplicates).
+window.__reloadOnlyWithIds = () => {
+  sessionStorage.setItem(KEY, JSON.stringify(comments.filter((c) => c.id)));
+  location.reload();
+};
+// A comment whose text is still empty when it is inserted and fills in after delayMs
+// (React rendering the body late).
+window.__addSlowComment = (author, text, delayMs) => {
+  const c = { author, text, id: null };
+  comments.push(c);
+  save();
+  const el = build({ author, text: '', id: null });
+  list.append(el);
+  setTimeout(() => { el.querySelector('.text').textContent = text; }, delayMs);
+};
+// The whole list re-rendered: every article node replaced by a fresh clone; the
+// clone at index `changedIndex` (if >= 0) has slightly different text.
+window.__replaceAll = (changedIndex) => {
+  Array.from(list.children).forEach((node, i) => {
+    const clone = node.cloneNode(true);
+    if (i === changedIndex) clone.querySelector('.text').textContent += ' (edited)';
+    node.replaceWith(clone);
+  });
+};
+// React replacing the last comment's node with an identical one.
+window.__rerenderLast = () => {
+  const last = list.lastElementChild;
+  if (last) last.replaceWith(last.cloneNode(true));
 };
 </script>
 </body></html>
