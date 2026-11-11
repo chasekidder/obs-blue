@@ -101,7 +101,7 @@ If the key stays blue or turns orange, do not retry blindly: go to step 4. If it
 Also check the following. They come from code review and have **not** been verified against real Facebook yet:
 
 1. **Right element clicked.** Selector matching tries role elements first (buttons, links). If setup clicked the wrong `Go live` or `Streaming software` element (for example a menu entry or a heading), the recording shows it. Tighten the matching in `fb/selectors.py`.
-2. **Required title.** If Facebook's go-live dialog requires a title, stream-pilot fills an empty required title textbox with `Live` and logs a WARNING. Check whether this happens:
+2. **Required title** (check after the part B run; a dry run never opens the go-live dialog). If Facebook's go-live dialog requires a title, stream-pilot fills an empty required title textbox with `Live` and logs a WARNING. Check whether this happens:
    ```
    journalctl --user -u stream-pilot -b | grep -i title
    ```
@@ -124,6 +124,7 @@ Pass criteria for part A: the status key reaches green `GO LIVE`, no failure fol
 3. Check, within the first minute:
    - The key goes blinking blue, then red `LIVE` with the elapsed time.
    - The Facebook **comments popout opens as a borderless column to the right of OBS**, on top of everything, with no title bar (KWin rule in `/etc/xdg/kwinrulesrc`).
+   - If the popout instead opens as a normal tab or window with a title bar, the `chromium --app=` handoff to the running browser failed and stream-pilot used its fallback (a CDP-opened window; comments are still captured). Confirm with `journalctl --user -u stream-pilot -b | grep -i "falling back"`. The handoff could not be tested in the headless test container, so this is a real hardware check; report it with the log line.
    - The OBS window fills the left part of the screen and does not overlap the popout.
    - In Facebook on your phone or another PC, the live is visible in the test Group.
 4. Check the stream folder exists and `comments.jsonl` appears (it is created when the first comment is captured):
