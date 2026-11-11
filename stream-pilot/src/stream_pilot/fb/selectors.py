@@ -164,3 +164,44 @@ def js_regex_source(rx: re.Pattern) -> str:
     """JS regex literal source (e.g. '/^a(?<x>b)$/i') equivalent to a simple Python regex."""
     body, flags = js_regex_parts(rx)
     return f"/{body}/{flags}"
+
+
+# ==== Producer-flow additions (fb/producer.py) ===============================
+# Playwright role names, attributes, dialog/title handling and DOM queries used
+# by the producer flows. Kept here so producer.py holds no Facebook knowledge.
+
+ROLE_BUTTON = "button"
+ROLE_RADIO = "radio"
+ROLE_SWITCH = "switch"
+ROLE_CHECKBOX = "checkbox"
+ROLE_DIALOG = "dialog"
+ROLE_TEXTBOX = "textbox"
+
+ATTR_ARIA_CHECKED = "aria-checked"
+ATTR_ARIA_DISABLED = "aria-disabled"
+ATTR_ARIA_EXPANDED = "aria-expanded"
+
+# Textbox (role) whose accessible name marks it as the post title in the go-live interstitial.
+TITLE_FIELD = re.compile(r"title", re.I)
+# Marks a control the interstitial insists on. Only *textboxes* matching this are ever filled
+# (with DEFAULT_LIVE_TITLE, when empty); other required controls are skipped and logged.
+REQUIRED_FIELD_SELECTOR = "[required], [aria-required='true']"
+# Neutral title typed into an empty title/required textbox on the go-live interstitial.
+DEFAULT_LIVE_TITLE = "Live"
+
+# Elements whose value/text may hold the server URL or stream key.
+VALUE_ELEMENTS_SELECTOR = "input, textarea"
+TEXT_ELEMENTS_SELECTOR = "[data-testid], code, span"
+MAX_TEXT_ELEMENTS = 2000
+
+
+def group_name_pattern(group_name: str) -> re.Pattern:
+    """Case-insensitive, literal (regex-escaped) match for the configured Group name.
+
+    Raises ValueError for an empty name (it would match every page). Matching is by substring:
+    "Foo Group" also matches "Foo Group 2".
+    """
+    name = group_name.strip()
+    if not name:
+        raise ValueError("group name must not be empty")
+    return re.compile(re.escape(name), re.I)

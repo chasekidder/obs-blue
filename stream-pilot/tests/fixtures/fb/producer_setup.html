@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Live Producer setup (fixture)</title></head>
+<html lang="en"><head><meta charset="utf-8"><title>Live Producer setup (fixture)</title>
+<style>[role=switch] { display: inline-block; width: 40px; height: 20px; border: 1px solid #888; margin: 4px; }
+[role=switch][aria-checked=true] { background: #1877f2; }</style></head>
 <body>
 <div id="app">
   <h1>Set up live video</h1>
@@ -24,19 +26,58 @@
 
 <div id="interstitial" role="dialog" aria-modal="true" aria-label="Before you go live" hidden>
   <p>Ready to go live?</p>
-  <button type="button" onclick="location.href='/live/producer/dashboard/1122334455667788/'">Go live</button>
+  <!-- ?title=1: a required "Add title" field; the confirm button stays disabled until it is filled -->
+  <input type="text" id="title" aria-label="Add title" required hidden>
+  <!-- ?reqcheck=1: a required non-text control that must be skipped (never typed into) -->
+  <label id="reqcheck" hidden><input type="checkbox" required> I agree to the fixture terms</label>
+  <button type="button" id="confirm" onclick="location.href='/live/producer/dashboard/1122334455667788/'">Go live</button>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-$('sw-btn').onclick = () => { $('key-section').hidden = false; };
+const params = new URLSearchParams(location.search);
+// Test knobs: ?nokey=1 (no stream key shown), ?noendstop=1 (no end-live switch),
+// ?endoff=1 (end-live switch starts unchecked), ?title=1 (interstitial needs a title; the typed
+// value is kept in sessionStorage so a test can read it after the navigation),
+// ?reqcheck=1 (interstitial also has a required checkbox), ?nosw=1 (no Streaming software button),
+// ?stuckswitch=1 (the persistent-key switch ignores clicks), ?advopen=1 (Advanced settings starts
+// open), ?late=<ms> (the persistent-key switch only shows <ms> after Streaming software is clicked),
+// ?stuckdialog=1 (confirm does nothing), ?disabledconfirm=1 (confirm stays disabled).
+if (params.has('nokey')) document.querySelector('input[aria-label="Stream key"]').closest('label').remove();
+if (params.has('noendstop')) document.querySelector('[aria-label="End live video when stream stops"]').remove();
+if (params.has('endoff')) document.querySelector('[aria-label="End live video when stream stops"]').setAttribute('aria-checked', 'false');
+if (params.has('nosw')) $('sw-btn').remove();
+if (params.has('reqcheck')) $('reqcheck').hidden = false;
+if (params.has('title')) {
+  $('title').hidden = false;
+  $('confirm').disabled = true;
+  $('title').oninput = () => {
+    sessionStorage.setItem('typedTitle', $('title').value);
+    $('confirm').disabled = $('title').value.trim() === '';
+  };
+}
+if (params.has('disabledconfirm')) $('confirm').disabled = true;
+if (params.has('stuckdialog')) $('confirm').onclick = () => {};
+if (params.has('advopen')) {
+  $('adv').hidden = false;
+  $('adv-btn').setAttribute('aria-expanded', 'true');
+}
+const persistent = document.querySelector('[aria-label="Persistent stream key"]');
+$('sw-btn')?.addEventListener('click', () => {
+  $('key-section').hidden = false;
+  if (params.has('late')) {
+    persistent.style.display = 'none';
+    setTimeout(() => { persistent.style.display = ''; }, Number(params.get('late')) || 1000);
+  }
+});
 $('adv-btn').onclick = () => {
   const open = $('adv').hidden;
   $('adv').hidden = !open;
   $('adv-btn').setAttribute('aria-expanded', String(open));
 };
 for (const sw of document.querySelectorAll('[role=switch]')) {
-  const toggle = () => sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
+  const stuck = params.has('stuckswitch') && sw === persistent;
+  const toggle = () => stuck || sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
   sw.onclick = toggle;
   sw.onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
 }

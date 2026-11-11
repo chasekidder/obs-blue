@@ -288,3 +288,24 @@ def test_js_regex_source_is_valid_and_equivalent_in_node():
     )
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20, check=True)
     assert json.loads(out.stdout) == ["Jane Doe", COMMENT_ID, True, LIVE_ID]
+
+
+def test_group_name_pattern_is_literal_and_case_insensitive():
+    rx = S.group_name_pattern(" Test (Resale) Group+ ")
+    assert rx.search("Posting to test (resale) group+ now")
+    assert not rx.search("Test Resale Group")
+
+
+def test_group_name_pattern_rejects_an_empty_name():
+    for blank in ("", "   ", "\n\t"):
+        with pytest.raises(ValueError):
+            S.group_name_pattern(blank)
+
+
+def test_title_field_matches_title_labels_only():
+    for label in ("Add title", "Title", "Live video TITLE (required)"):
+        assert S.TITLE_FIELD.search(label), label
+    assert not S.TITLE_FIELD.search("Description")
+    assert S.DEFAULT_LIVE_TITLE.strip()
+    # required-field selector is a plain CSS selector list, not a regex
+    assert "[required]" in S.REQUIRED_FIELD_SELECTOR
