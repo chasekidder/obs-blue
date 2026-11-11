@@ -1415,7 +1415,11 @@ class HealthCapture(FakeCapture):
 
     async def start(self, live_id, stream_dir) -> None:
         await super().start(live_id, stream_dir)
-        await self._gated("start")  # FakeCapture itself has no start gate
+        try:
+            await self._gated("start")  # FakeCapture itself has no start gate
+        except asyncio.CancelledError:
+            self.calls.append(("capture.start.cancelled",))
+            raise
 
     def healthy(self) -> bool:
         self.calls.append(("capture.healthy",))
@@ -1473,9 +1477,19 @@ async def test_reconnecting_tick_also_reattaches_capture(make):
     assert len(_starts(rig)) == 1
 
 
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
 async def test_reattach_failure_never_reaches_the_controller(make, caplog):
     cap = HealthCapture(healthy=True)
     rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
     await rig.to_live()
     cap.calls.clear()
     cap.is_healthy = False
@@ -1484,7 +1498,8 @@ async def test_reattach_failure_never_reaches_the_controller(make, caplog):
     await rig.settle()
     assert rig.c.state == State.LIVE
     assert "capture.reattach failed" in caplog.text
-    await rig.c.handle(Tick())  # retried once per Tick
+    clock.t += 30.0  # past the first backoff
+    await rig.c.handle(Tick())  # retried
     await rig.settle()
     assert len(_starts(rig)) == 2
     assert rig.c.state == State.LIVE
@@ -1529,6 +1544,9 @@ async def test_end_flow_cancels_a_pending_reattach(make):
     await rig.settle()
     assert ("capture.stop",) in cap.calls
     assert rig.c._reattach is None or rig.c._reattach.done()
+    # the pending start was cancelled (not completed) before capture.stop ran
+    assert ("capture.start.cancelled",) in cap.calls
+    assert cap.calls.index(("capture.start.cancelled",)) < cap.calls.index(("capture.stop",))
 
 
 async def test_ready_tick_never_probes_capture(make):
@@ -1539,3 +1557,199 @@ async def test_ready_tick_never_probes_capture(make):
     await rig.c.handle(Tick())
     await rig.settle()
     assert cap.calls == []
+
+
+async def test_ending_tick_never_reattaches(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.is_healthy = False
+    rig.obs.gates["stop_stream"] = asyncio.Event()  # the end flow parks in ENDING
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.wait_state(State.ENDING)
+    cap.calls.clear()
+    await rig.c.handle(Tick())
+    assert cap.calls == []
+    await rig.c.aclose()
+
+
+# ---------------------------------------- bounded cancel of a stuck re-attach (review I1)
+
+
+class StubbornCapture(HealthCapture):
+    """start() swallows the first cancel and then sleeps (a hung adapter cleanup)."""
+
+    hang = False  # set by the test once the stream is live
+
+    async def start(self, live_id, stream_dir) -> None:
+        self.calls.append(("capture.start", live_id, stream_dir))
+        if not self.hang:
+            return
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.calls.append(("capture.start.cancelled",))
+            await asyncio.sleep(60)  # ignores the cancel; only a second cancel ends it
+
+
+async def _poll(pred, timeout=3.0):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if pred():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not reached in time")
+
+
+async def _kill(task):
+    for _ in range(3):
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.wait({task}, timeout=0.5)
+
+
+@pytest.fixture
+def short_cancel_wait(monkeypatch):
+    monkeypatch.setattr(controller_mod, "REATTACH_CANCEL_WAIT_S", 0.2)
+
+
+async def test_end_flow_is_not_blocked_by_a_stuck_reattach(make, short_cancel_wait, caplog):
+    cap = StubbornCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.hang = True
+    cap.calls.clear()
+    cap.is_healthy = False
+    await rig.c.handle(Tick())
+    await rig.wait_call(cap, "capture.start")
+    task = rig.c._reattach
+    await asyncio.wait_for(rig.c.handle(DeckPress(0, long=True)), 2)  # must not hang
+    await _poll(lambda: ("obs.stop_stream",) in rig.obs.calls)
+    assert "abandon" in caplog.text
+    await _kill(task)
+    await rig.c.aclose()
+
+
+async def test_power_press_is_not_blocked_by_a_stuck_reattach(make, short_cancel_wait):
+    cap = StubbornCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.hang = True
+    cap.calls.clear()
+    cap.is_healthy = False
+    await rig.c.handle(Tick())
+    await rig.wait_call(cap, "capture.start")
+    task = rig.c._reattach
+    await asyncio.wait_for(rig.c.handle(PowerPress()), 2)
+    await _poll(lambda: ("obs.stop_stream",) in rig.obs.calls)
+    await _kill(task)
+    await rig.c.aclose()
+
+
+async def test_aclose_is_not_blocked_by_a_stuck_reattach(make, short_cancel_wait):
+    cap = StubbornCapture(healthy=True)
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.hang = True
+    cap.calls.clear()
+    cap.is_healthy = False
+    await rig.c.handle(Tick())
+    await rig.wait_call(cap, "capture.start")
+    task = rig.c._reattach
+    await asyncio.wait_for(rig.c.aclose(), 2)
+    await _kill(task)
+
+
+# ----------------------------------------------------- re-attach backoff (review I3)
+
+
+async def test_reattach_backs_off_exponentially_and_resets_on_success(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_live()
+    cap.calls.clear()
+    cap.is_healthy = False
+    cap._start = Script([RuntimeError("1"), RuntimeError("2"), RuntimeError("3"), None])
+
+    async def tick():
+        await rig.c.handle(Tick())
+        await rig.settle()
+
+    await tick()  # failure 1 -> wait 30 s
+    assert len(_starts(rig)) == 1
+    clock.t += 29
+    await tick()
+    assert len(_starts(rig)) == 1  # still backing off
+    clock.t += 1
+    await tick()  # failure 2 -> wait 60 s
+    assert len(_starts(rig)) == 2
+    clock.t += 59
+    await tick()
+    assert len(_starts(rig)) == 2
+    clock.t += 1
+    await tick()  # failure 3 -> wait 120 s
+    assert len(_starts(rig)) == 3
+    clock.t += 119
+    await tick()
+    assert len(_starts(rig)) == 3
+    clock.t += 1
+    await tick()  # success: backoff resets
+    assert len(_starts(rig)) == 4
+    # later the popout dies again: the very next Tick re-attaches (no backoff left)
+    await tick()
+    assert len(_starts(rig)) == 5
+
+
+async def test_reattach_backoff_is_capped_at_300_seconds(make):
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_live()
+    cap.is_healthy = False
+    cap._start = Script(RuntimeError("down"))  # always fails
+    for _ in range(12):
+        clock.t += 1000
+        await rig.c.handle(Tick())
+        await rig.settle()
+    cap.calls.clear()
+    clock.t += 299
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert _starts(rig) == []
+    clock.t += 1
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert len(_starts(rig)) == 1
+
+
+# ------------------------------------------ bounded go-live / resume capture steps (review m6)
+
+
+async def test_hung_open_comments_and_capture_start_do_not_stall_go_live(make, monkeypatch):
+    monkeypatch.setattr(controller_mod, "CAPTURE_STEP_TIMEOUT_S", 0.05)
+    cap = HealthCapture(healthy=True)
+    rig = make(capture=cap)
+    rig.fb.gates["open_comments"] = asyncio.Event()
+    cap.gates["start"] = asyncio.Event()
+    await rig.to_ready()
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert ("fb.park_dashboard",) in rig.fb.calls
+    assert ("capture.start.cancelled",) in cap.calls
+
+
+async def test_hung_capture_start_does_not_stall_resume(make, monkeypatch, tmp_path):
+    monkeypatch.setattr(controller_mod, "CAPTURE_STEP_TIMEOUT_S", 0.05)
+    cap = HealthCapture(healthy=True)
+    cap.gates["start"] = asyncio.Event()
+    rig = make(obs=FakeObs(active=True), capture=cap)
+    rig.store.save(Saved("LIVE", "42", str(tmp_path / "s")))
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.LIVE

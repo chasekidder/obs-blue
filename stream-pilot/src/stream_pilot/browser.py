@@ -214,9 +214,11 @@ class CdpBrowser:
                 )
                 context = browser.contexts[0] if browser.contexts else await browser.new_context()
             except BaseException:
+                # Bounded and shielded: a hung driver must not make a cancelled or
+                # failed connect (e.g. a capture re-attach) hang its caller.
                 try:
-                    await pw.stop()
-                except Exception:
+                    await asyncio.wait_for(asyncio.shield(pw.stop()), CLOSE_TIMEOUT_S)
+                except BaseException:
                     pass
                 raise
             self._bind(pw, browser, context)
@@ -239,9 +241,7 @@ class CdpBrowser:
         if browser is not None:
             try:
                 await asyncio.wait_for(self._browser_close(browser), CLOSE_TIMEOUT_S)
-            except BaseException as exc:
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
+            except Exception as exc:  # CancelledError / KeyboardInterrupt propagate
                 log.debug("Browser.close failed (already closed?): %r", exc)
         try:
             await self._stop_playwright()
@@ -267,6 +267,14 @@ class CdpBrowser:
         if page not in self.popout_pages:
             self.popout_pages.append(page)
 
+    def untrack_popout(self, page: "Page") -> None:
+        if page in self.popout_pages:
+            self.popout_pages.remove(page)
+
+    def open_popouts(self) -> list["Page"]:
+        """Tracked popout pages that are still open."""
+        return [p for p in self.popout_pages if not p.is_closed()]
+
     def _open_pages(self) -> list["Page"]:
         return [p for p in self.context.pages if not p.is_closed()]
 
@@ -290,6 +298,19 @@ class CdpBrowser:
             if url_prefix is not None and not url.startswith(url_prefix):
                 continue
             if contains is not None and contains not in url:
+                continue
+            return page
+        return None
+
+    def _adopt_new_page(self, before: set) -> "Page | None":
+        """A page that appeared since ``before`` (not extension/devtools/tracked), if any.
+
+        Used when a window we asked for exists but its URL does not match what we
+        expected (a redirect): reusing it beats opening yet another window.
+        """
+        for page in self._open_pages():
+            url = page.url or ""
+            if page in before or page in self.popout_pages or url.startswith(_IGNORED_SCHEMES):
                 continue
             return page
         return None
@@ -322,6 +343,7 @@ class CdpBrowser:
             self.track_popout(page)
             return page
 
+        before = set(self._open_pages())
         argv = [self.cfg.chromium_bin, f"--user-data-dir={self.cfg.user_data_dir}", f"--app={url}"]
         proc: Any = None
         try:
@@ -339,6 +361,10 @@ class CdpBrowser:
 
         page = await self._wait_for_page(prefix, timeout_s, exited_badly)
         if page is None:
+            page = self._adopt_new_page(before)
+            if page is not None:
+                log.warning("app window opened with an unexpected URL (redirect?); using it")
+        if page is None:
             log.warning(
                 "app-window handoff produced no page (waited up to %.0fs); falling back to a CDP window",
                 timeout_s,
@@ -349,9 +375,14 @@ class CdpBrowser:
 
     async def _open_over_cdp(self, url: str, prefix: str) -> "Page":
         try:
+            before = set(self._open_pages())
             session = await self._browser_session()
             await session.send("Target.createTarget", {"url": url, "newWindow": True})
             page = await self._wait_for_page(prefix, self.fallback_wait_s)
+            if page is None:
+                page = self._adopt_new_page(before)
+                if page is not None:
+                    log.warning("CDP window opened with an unexpected URL (redirect?); using it")
             if page is not None:
                 return page
             log.warning("CDP window did not show up; opening a plain page instead")

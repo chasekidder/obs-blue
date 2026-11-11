@@ -105,18 +105,40 @@ class _Router:
     def __init__(self, context: "BrowserContext") -> None:
         self._context = context
         self._installed = False
+        self._binding_task: "asyncio.Task | None" = None
+        self._script_task: "asyncio.Task | None" = None
         self._lock = asyncio.Lock()
         self.owner: "FbDomCapture | None" = None
         self.page: "Page | None" = None
         self.log: CommentLog | None = None
 
     async def ensure_installed(self) -> None:
+        """Install the binding and the init script, each exactly once per context.
+
+        Each step runs as its own task that survives cancellation of the caller
+        (shielded) and is remembered, so a cancelled or failed ``attach`` can be
+        retried later without calling ``expose_binding`` a second time (Playwright
+        raises "already registered"). A step that raised is retried, a completed
+        or still-running one is never started again.
+        """
         async with self._lock:
             if self._installed:
                 return
-            await self._context.expose_binding(BINDING_NAME, self.on_message)
-            await self._context.add_init_script(render_watcher())
+            await self._run_step(
+                "_binding_task",
+                lambda: self._context.expose_binding(BINDING_NAME, self.on_message),
+            )
+            await self._run_step(
+                "_script_task", lambda: self._context.add_init_script(render_watcher())
+            )
             self._installed = True
+
+    async def _run_step(self, attr: str, factory: Callable[[], Any]) -> None:
+        task: "asyncio.Task | None" = getattr(self, attr)
+        if task is None or task.cancelled() or (task.done() and task.exception() is not None):
+            task = asyncio.ensure_future(factory())
+            setattr(self, attr, task)  # remembered before awaiting: survives a cancel
+        await asyncio.shield(task)  # a cancel of the caller leaves the step running
 
     def route(self, owner: "FbDomCapture", page: "Page | None", log: CommentLog | None) -> None:
         self.owner, self.page, self.log = owner, page, log

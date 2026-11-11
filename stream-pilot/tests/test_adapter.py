@@ -142,6 +142,9 @@ async def test_full_flow_against_fixtures(stack, values, tmp_path, caplog):
     await cap.stop()
     assert cap.healthy() is False
     assert dom_pairs(path) == SEED  # the file is kept
+    assert popout.is_closed()  # the popout window is closed and untracked on stop
+    assert browser.popout_pages == []
+    assert not dashboard.is_closed()
 
     await fb.close_browser()
     assert not browser.is_connected
@@ -156,6 +159,17 @@ async def test_logged_in_false_on_the_login_page(cdp_url, fixture_base_url, tmp_
         assert await fb.logged_in() is False
     finally:
         await fb.close_browser()
+
+
+async def test_facebook_adapter_reconnects_after_the_cdp_connection_dropped(stack):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    assert await fb.logged_in() is True
+    await browser._browser.close()  # drops the CDP connection (Chromium itself keeps running)
+    assert not browser.is_connected
+    assert await fb.logged_in() is True  # reconnects by itself
+    assert browser.is_connected
+    assert await fb.preview_lost() is False
 
 
 async def test_connect_is_idempotent(stack):

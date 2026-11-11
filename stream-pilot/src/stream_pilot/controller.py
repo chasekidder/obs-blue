@@ -66,6 +66,14 @@ END_STEP_TIMEOUT_S = 15.0
 # Upper bound for one capture re-attach (it may reconnect Chromium and reopen the
 # comments popout); it runs in its own task, so it never blocks handle().
 REATTACH_TIMEOUT_S = 90.0
+# How long end/power/aclose wait for a cancelled re-attach to unwind before
+# abandoning it: a hung adapter must never keep the end flow from starting.
+REATTACH_CANCEL_WAIT_S = 3.0
+# Re-attach attempts back off after failures: next try in min(MAX, BASE * 2**failures) s.
+REATTACH_BACKOFF_BASE_S = 15.0
+REATTACH_BACKOFF_MAX_S = 300.0
+# Bound for open_comments / capture.start in the go-live and resume paths.
+CAPTURE_STEP_TIMEOUT_S = 90.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -125,6 +133,8 @@ class Controller:
         self._flow: asyncio.Task | None = None
         self._restart: asyncio.Task | None = None
         self._reattach: asyncio.Task | None = None
+        self._reattach_failures = 0
+        self._reattach_next_try = 0.0
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_camera: str | None = None
@@ -201,7 +211,7 @@ class Controller:
 
     async def aclose(self) -> None:
         """Cancel background tasks (shutdown / test teardown)."""
-        await self._cancel(self._reattach)
+        await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
 
@@ -286,7 +296,7 @@ class Controller:
             await self._start_flow(self._shutdown_flow, enter=State.ENDING)
 
     async def _begin_end(self, *, power_off: bool) -> None:
-        await self._cancel(self._reattach)
+        await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._restart)
         self._power_after_end = False
         self._end_mode = "power" if power_off else "end"
@@ -356,6 +366,8 @@ class Controller:
         live_id, stream_dir = self.live_id, self.stream_dir
         if live_id is None or stream_dir is None:
             return
+        if self.clock() < self._reattach_next_try:
+            return
         try:
             if probe():
                 return
@@ -368,11 +380,27 @@ class Controller:
         )
 
     async def _reattach_capture(self, live_id: str, stream_dir: Path) -> None:
-        await self._best_effort(
-            "capture.reattach",
-            self.capture.start(live_id, stream_dir),
-            REATTACH_TIMEOUT_S,
+        try:
+            await asyncio.wait_for(self.capture.start(live_id, stream_dir), REATTACH_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            log.warning("capture.reattach timed out after %.1fs (continuing)", REATTACH_TIMEOUT_S)
+            self._reattach_failed()
+        except Exception:
+            log.exception("capture.reattach failed (continuing)")
+            self._reattach_failed()
+        else:
+            self._reattach_failures = 0
+            self._reattach_next_try = 0.0
+
+    def _reattach_failed(self) -> None:
+        self._reattach_failures += 1
+        delay = min(
+            REATTACH_BACKOFF_MAX_S, REATTACH_BACKOFF_BASE_S * 2**self._reattach_failures
         )
+        self._reattach_next_try = self.clock() + delay
+        log.info("next capture re-attach in %.0fs", delay)
 
     @staticmethod
     async def _bounded(name: str, aw: Awaitable):
@@ -451,6 +479,20 @@ class Controller:
 
     def _flow_idle(self) -> bool:
         return self._flow is None or self._flow.done()
+
+    @staticmethod
+    async def _cancel_bounded(task: asyncio.Task | None, timeout: float) -> None:
+        """Cancel ``task`` but wait at most ``timeout`` s for it to unwind; then abandon it."""
+        if task is None or task.done():
+            return
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            log.warning("a cancelled background task did not stop within %.1fs; abandoning it", timeout)
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            return
+        if not task.cancelled():
+            task.exception()  # mark retrieved
 
     @staticmethod
     async def _cancel(task: asyncio.Task | None) -> None:
@@ -653,12 +695,11 @@ class Controller:
             await self._setup_flow("STARTING")
             return
         self._mkdir(self.stream_dir)
-        try:
-            await self.capture.start(live_id, self.stream_dir)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("resume: capture.start failed")
+        await self._best_effort(
+            "resume: capture.start",
+            self.capture.start(live_id, self.stream_dir),
+            CAPTURE_STEP_TIMEOUT_S,
+        )
         self._transition(State.LIVE)
 
     @staticmethod
@@ -685,8 +726,12 @@ class Controller:
         # during the steps below runs the normal live end flow (cancelling this flow).
         self._transition(State.LIVE)
         # Best effort: nothing below may turn into ERROR.
-        await self._best_effort("open_comments", self.fb.open_comments(live_id))
-        await self._best_effort("capture.start", self.capture.start(live_id, stream_dir))
+        await self._best_effort(
+            "open_comments", self.fb.open_comments(live_id), CAPTURE_STEP_TIMEOUT_S
+        )
+        await self._best_effort(
+            "capture.start", self.capture.start(live_id, stream_dir), CAPTURE_STEP_TIMEOUT_S
+        )
         await self._best_effort("park_dashboard", self.fb.park_dashboard())
 
     @staticmethod

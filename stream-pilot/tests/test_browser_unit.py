@@ -40,12 +40,17 @@ class FakePage:
     def __init__(self, url: str = "about:blank"):
         self.url = url
         self._closed = False
+        self.closes = 0
+        self.close_hangs = False
         self.gotos: list[str] = []
 
     def is_closed(self) -> bool:
         return self._closed
 
-    def close(self) -> None:
+    async def close(self) -> None:
+        self.closes += 1
+        if self.close_hangs:
+            await asyncio.sleep(30)
         self._closed = True
 
     async def goto(self, url: str, **kw) -> None:
@@ -318,7 +323,7 @@ async def test_dashboard_page_creates_one_when_only_helper_pages_exist(cfg):
 
 async def test_dashboard_page_ignores_closed_pages(cfg):
     dead = FakePage("http://x.test/")
-    dead.close()
+    await dead.close()
     b, ctx, _ = make_browser(cfg, [dead])
     page = await b.dashboard_page()
     assert page is not dead
@@ -331,7 +336,7 @@ async def test_find_page_prefix_and_contains(cfg):
     assert await b_.find_page("http://x.test/other") is None
     assert await b_.find_page(contains="/1122/COMMENTS") is a
     assert await b_.find_page(contains="/9999/COMMENTS") is None
-    a.close()
+    await a.close()
     assert await b_.find_page(contains="/1122/COMMENTS") is None
 
 
@@ -578,7 +583,8 @@ class FakeCdp:
         self.opened: list[str] = []
         self.dashboard = FakePage("about:blank")
         self.reachable_urls: list[str] = []
-        self.popouts: list = []
+        self.popout_pages: list = []
+        self.connect_raises: Exception | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -586,6 +592,8 @@ class FakeCdp:
 
     async def connect(self) -> None:
         self.calls.append(("connect",))
+        if self.connect_raises is not None:
+            raise self.connect_raises
         self.connected = True
 
     async def dashboard_page(self):
@@ -608,7 +616,15 @@ class FakeCdp:
         return page
 
     def track_popout(self, page) -> None:
-        self.popouts.append(page)
+        if page not in self.popout_pages:
+            self.popout_pages.append(page)
+
+    def untrack_popout(self, page) -> None:
+        if page in self.popout_pages:
+            self.popout_pages.remove(page)
+
+    def open_popouts(self) -> list:
+        return [p for p in self.popout_pages if not p.is_closed()]
 
     async def http_reachable(self, url, timeout_s=5):
         self.reachable_urls.append(url)
@@ -618,9 +634,10 @@ class FakeCdp:
         self.calls.append(("close_browser",))
 
 
-async def test_facebook_adapter_methods_fail_clearly_before_connect(cfg):
-    b = CdpBrowser(cfg.cdp)
-    fb = FacebookAdapter(cfg, b)
+async def test_facebook_adapter_methods_surface_a_failed_connect_clearly(cfg):
+    cdp = FakeCdp(cfg, connected=False)
+    cdp.connect_raises = BrowserNotConnected("cannot connect to Chromium")
+    fb = FacebookAdapter(cfg, cdp)
     for call in (
         fb.logged_in(),
         fb.setup_live(),
@@ -631,9 +648,42 @@ async def test_facebook_adapter_methods_fail_clearly_before_connect(cfg):
         fb.park_dashboard(),
         fb.save_failure("x", Path("/nonexistent/failure")),
     ):
-        with pytest.raises(BrowserNotConnected, match="not connected"):
+        with pytest.raises(BrowserNotConnected, match="cannot connect"):
             await call
     await fb.close_browser()  # never raises
+
+
+async def test_facebook_adapter_reconnects_when_the_browser_is_disconnected(cfg, monkeypatch):
+    class P:
+        def __init__(self, page, **kw):
+            pass
+
+        async def open(self, url):
+            pass
+
+        async def is_login_page(self):
+            return False
+
+        async def preview_lost(self):
+            return False
+
+    monkeypatch.setattr(adapter_mod, "Producer", P)
+    for call in ("logged_in", "preview_lost", "open_comments", "park_dashboard"):
+        cdp = FakeCdp(cfg, connected=False)
+        fb = FacebookAdapter(cfg, cdp)
+        args = (LIVE_ID,) if call == "open_comments" else ()
+        await getattr(fb, call)(*args)
+        assert cdp.calls == [("connect",)], call
+        await getattr(fb, call)(*args)
+        assert cdp.calls == [("connect",)], call  # connected now: no second connect
+
+
+async def test_facebook_adapter_does_not_connect_when_already_connected(cfg):
+    cdp = FakeCdp(cfg)
+    fb = FacebookAdapter(cfg, cdp)
+    await fb.open_comments(LIVE_ID)
+    await fb.park_dashboard()
+    assert cdp.calls == []
 
 
 async def test_facebook_adapter_reachable_uses_selectors_url_and_no_connection(cfg):
@@ -787,7 +837,7 @@ async def test_capture_start_attaches_to_the_popout_and_writes_into_stream_dir(c
     assert log.path == tmp_path / "s1" / "comments.jsonl" and log.live_id == LIVE_ID
     assert cdp.opened == []
     assert cap.healthy() is True
-    popout.close()
+    await popout.close()
     assert cap.healthy() is False
     await cap.stop()
 
@@ -917,3 +967,236 @@ async def test_capture_ssn_task_restarted_if_it_died(cfg, tmp_path, fakes, monke
     await cap.start(LIVE_ID, tmp_path)
     assert len(FakeSsn.instances) == 2
     await cap.stop()
+
+
+# ------------------------------------- bounded connect cleanup / close (review I1, m7)
+
+
+class _FakePw:
+    def __init__(self, *, connect_exc=None, connect_hangs=False, stop_hangs=False):
+        self.connect_exc, self.connect_hangs, self.stop_hangs = connect_exc, connect_hangs, stop_hangs
+        self.stop_called = False
+        outer = self
+
+        class Chromium:
+            async def connect_over_cdp(self, url):
+                if outer.connect_hangs:
+                    await asyncio.sleep(30)
+                raise outer.connect_exc
+
+        self.chromium = Chromium()
+
+    async def stop(self):
+        self.stop_called = True
+        if self.stop_hangs:
+            await asyncio.sleep(30)
+
+
+@pytest.fixture
+def fake_playwright(monkeypatch):
+    """Install a fake ``playwright.async_api`` so ``CdpBrowser.connect`` runs on the host."""
+    import sys
+    import types
+
+    holder = {}
+
+    class _Starter:
+        async def start(self):
+            return holder["pw"]
+
+    mod = types.ModuleType("playwright.async_api")
+    mod.async_playwright = lambda: _Starter()
+    pkg = types.ModuleType("playwright")
+    pkg.async_api = mod
+    monkeypatch.setitem(sys.modules, "playwright", pkg)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", mod)
+    monkeypatch.setattr(browser_mod, "CLOSE_TIMEOUT_S", 0.05)
+    return holder
+
+
+async def test_connect_failure_cleanup_is_bounded_when_playwright_stop_hangs(cfg, fake_playwright):
+    pw = fake_playwright["pw"] = _FakePw(connect_exc=RuntimeError("refused"), stop_hangs=True)
+    b = CdpBrowser(cfg.cdp)
+    with pytest.raises(RuntimeError, match="refused"):
+        await asyncio.wait_for(b.connect(), 2)
+    assert pw.stop_called
+    assert not b.is_connected
+
+
+async def test_cancelled_connect_does_not_hang_on_a_stuck_playwright_stop(cfg, fake_playwright):
+    pw = fake_playwright["pw"] = _FakePw(connect_hangs=True, stop_hangs=True)
+    b = CdpBrowser(cfg.cdp)
+    task = asyncio.ensure_future(b.connect())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if task is not None and not task.done():
+            break
+    await asyncio.sleep(0.05)
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=2)
+    assert done, "connect() did not unwind after a cancel"
+    assert task.cancelled()
+    assert pw.stop_called
+
+
+async def test_close_browser_propagates_cancellation(cfg):
+    b, _, fb = make_browser(cfg)
+
+    async def hang(method, params):
+        await asyncio.sleep(30)
+
+    fb.on_send = hang
+    task = asyncio.ensure_future(b.close_browser())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=2)
+    assert done and task.cancelled()
+
+
+# ------------------------------------- no window pile-up (review I3)
+
+REDIRECTED = "http://x.test/login/checkpoint?next=comments"
+
+
+async def test_open_app_window_adopts_a_redirected_handoff_window(cfg, caplog):
+    holder = {}
+
+    async def spawn(argv):
+        async def later():
+            await asyncio.sleep(0.02)
+            holder["ctx"].pages.append(FakePage(REDIRECTED))
+
+        asyncio.ensure_future(later())
+
+    dashboard = FakePage("about:blank")
+    b, ctx, fb = make_browser(cfg, [dashboard], spawn=spawn)
+    holder["ctx"] = ctx
+    before = len(ctx.pages)
+    with caplog.at_level(logging.WARNING):
+        page = await b.open_app_window(URL, timeout_s=0.15)
+    assert page.url == REDIRECTED and page is not dashboard
+    assert len(ctx.pages) - before == 1  # one window for this attempt
+    assert fb.calls == [] and ctx.new_pages == 0  # no CDP window, no plain page
+    assert page in b.popout_pages
+
+
+async def test_open_app_window_adopts_a_createtarget_page_with_unexpected_url(cfg):
+    async def spawn(argv):
+        pass
+
+    b, ctx, fb = make_browser(cfg, [FakePage("about:blank")], spawn=spawn)
+
+    async def on_send(method, params):
+        if method == "Target.createTarget":
+            ctx.pages.append(FakePage(REDIRECTED))
+
+    fb.on_send = on_send
+    b.fallback_wait_s = 0.1
+    before = len(ctx.pages)
+    page = await b.open_app_window(URL, timeout_s=0.05)
+    assert page.url == REDIRECTED
+    assert len(ctx.pages) - before == 1
+    assert ctx.new_pages == 0
+
+
+async def test_open_app_window_never_adopts_existing_extension_or_tracked_pages(cfg):
+    ext = FakePage(f"chrome-extension://{SSN_EXTENSION_ID}/popup.html")
+
+    async def spawn(argv):
+        async def later():
+            await asyncio.sleep(0.01)
+            ctx.pages.append(FakePage("devtools://devtools/x"))
+            ctx.pages.append(FakePage(f"chrome-extension://{SSN_EXTENSION_ID}/other.html"))
+
+        asyncio.ensure_future(later())
+
+    b, ctx, fb = make_browser(cfg, [FakePage("about:blank"), ext], spawn=spawn)
+    b.fallback_wait_s = 0.05
+    page = await b.open_app_window(URL, timeout_s=0.1)
+    assert ctx.new_pages == 1  # nothing adoptable: the last resort plain page
+    assert page.gotos == [URL]
+
+
+async def test_open_popouts_and_untrack(cfg):
+    p1, p2 = FakePage(URL), FakePage(URL)
+    b, _, _ = make_browser(cfg, [p1, p2])
+    b.track_popout(p1)
+    b.track_popout(p2)
+    assert b.open_popouts() == [p1, p2]
+    await p1.close()
+    assert b.open_popouts() == [p2]
+    b.untrack_popout(p2)
+    assert b.open_popouts() == []
+    b.untrack_popout(p2)  # idempotent
+
+
+# ------------------------------- capture adapter popout handling (review m5, m8, I3)
+
+
+def test_popout_url_fragment_lives_in_selectors():
+    frag = S.popout_url_fragment(LIVE_ID)
+    assert frag == f"/{LIVE_ID}{S.COMMENTS_PATH_MARKER}"
+    assert S.is_popout_url(f"http://h/live/producer/dashboard/{LIVE_ID}{S.COMMENTS_PATH_MARKER}/")
+    assert not S.is_popout_url("http://h/login")
+
+
+async def test_capture_reuses_a_tracked_redirected_popout_instead_of_opening_another(cfg, tmp_path, fakes):
+    cdp = FakeCdp(cfg)
+    stray = FakePage("http://127.0.0.1:1/login/checkpoint")
+    cdp.pages.append(stray)
+    cdp.track_popout(stray)
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path)
+    assert cdp.opened == []
+    assert FakeDom.instances[0].attaches[0][0] is stray
+    assert stray.gotos == [cfg.facebook.comments_url_template.format(live_id=LIVE_ID)]
+    await cap.stop()
+
+
+async def test_capture_does_not_reuse_a_stale_popout_of_another_live(cfg, tmp_path, fakes):
+    cdp = FakeCdp(cfg)
+    stale = FakePage(popout_url("9999999999"))
+    cdp.pages.append(stale)
+    cdp.track_popout(stale)
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path)
+    assert len(cdp.opened) == 1
+    assert FakeDom.instances[0].attaches[0][0] is not stale
+    await cap.stop()
+
+
+async def test_capture_stop_closes_and_untracks_the_popouts(cfg, tmp_path, fakes):
+    cdp = FakeCdp(cfg)
+    popout = FakePage(popout_url())
+    dashboard = FakePage("about:blank")
+    cdp.pages.extend([popout, dashboard])
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path)
+    assert cdp.popout_pages == [popout]
+    await cap.stop()
+    assert popout.is_closed() and popout.closes == 1
+    assert not dashboard.is_closed()
+    assert cdp.popout_pages == []
+    await cap.stop()  # second stop: nothing left to close
+    assert popout.closes == 1
+
+
+async def test_capture_stop_popout_close_is_bounded_and_never_raises(cfg, tmp_path, fakes, monkeypatch):
+    monkeypatch.setattr(adapter_mod, "_CLOSE_POPOUT_S", 0.05)
+    cdp = FakeCdp(cfg)
+    popout = FakePage(popout_url())
+    popout.close_hangs = True
+    cdp.pages.append(popout)
+    cap = CaptureAdapter(cfg, cdp)
+    await cap.start(LIVE_ID, tmp_path)
+    await asyncio.wait_for(cap.stop(), 2)
+    assert cdp.popout_pages == []
+
+    class Boom(FakePage):
+        async def close(self):
+            raise RuntimeError("Target closed")
+
+    boom = Boom(popout_url("5"))
+    cdp.pages.append(boom)
+    cdp.track_popout(boom)
+    await cap.stop()  # swallowed

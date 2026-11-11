@@ -216,6 +216,18 @@ def group_name_pattern(group_name: str) -> re.Pattern:
 
 # The comments popout lives under a URL path containing this marker.
 COMMENTS_PATH_MARKER = "/COMMENTS"
+
+
+def popout_url_fragment(live_id: str) -> str:
+    """The part of a popout page URL that identifies the comments popout of ``live_id``."""
+    return f"/{live_id}{COMMENTS_PATH_MARKER}"
+
+
+def is_popout_url(url: str) -> bool:
+    """True if ``url`` is a comments popout page (of any live)."""
+    return COMMENTS_PATH_MARKER in url
+
+
 COMMENT_LABEL_ATTR = "aria-label"
 # The commenter's profile link inside a comment (first one whose text is the author).
 COMMENT_AUTHOR_LINK_SELECTOR = "a[role='link']"

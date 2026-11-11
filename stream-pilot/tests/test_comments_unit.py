@@ -222,3 +222,47 @@ async def test_valid_messages_are_counted_and_stamped(attached, log):
     assert dict(cap.counts) == {"hello": 1, "rescan": 1, "live": 1}
     assert cap.last_message_at == 7.0
     assert [r["text"] for r in lines(log)] == ["a", "b"]
+
+
+# -- review minor 4: a failed or cancelled install must be retryable ----------------
+
+
+async def test_failed_init_script_install_never_re_registers_the_binding(log):
+    class Flaky(FakeContext):
+        fail_once = True
+
+        async def add_init_script(self, script) -> None:
+            if self.fail_once:
+                self.fail_once = False
+                raise RuntimeError("renderer gone")
+            await super().add_init_script(script)
+
+    ctx = Flaky()
+    page = FakePage()
+    cap = FbDomCapture(ctx)
+    with pytest.raises(RuntimeError, match="renderer gone"):
+        await cap.attach(page, log)
+    await cap.attach(page, log)  # must not call expose_binding again ("already registered")
+    assert list(ctx.bindings) == [BINDING_NAME]
+    assert len(ctx.scripts) == 1
+
+
+async def test_cancelled_install_is_completed_and_never_re_registers_the_binding(log):
+    import asyncio
+
+    class Slow(FakeContext):
+        async def expose_binding(self, name, callback) -> None:
+            await asyncio.sleep(0.05)
+            await super().expose_binding(name, callback)
+
+    ctx = Slow()
+    page = FakePage()
+    cap = FbDomCapture(ctx)
+    task = asyncio.ensure_future(cap.attach(page, log))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await cap.attach(page, log)  # a later attach: binding registered exactly once
+    assert list(ctx.bindings) == [BINDING_NAME]
+    assert len(ctx.scripts) == 1

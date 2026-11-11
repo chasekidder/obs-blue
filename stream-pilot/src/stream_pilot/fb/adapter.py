@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 _POPOUT_GRACE_S = 1.0  # how long start() looks for an already-open popout before opening one
 _POLL_S = 0.1
 _GOTO_BLANK_MIN_S = 5.0
+_CLOSE_POPOUT_S = 3.0  # bound for closing one popout page in stop()
 
 
 class FacebookAdapter:
@@ -46,8 +47,14 @@ class FacebookAdapter:
         self._producer_page = None
         self._comments_page = None
 
+    async def _ensure_connected(self) -> None:
+        """Reconnect after Chromium restarted (``connect`` is idempotent and serialized)."""
+        if not self._browser.is_connected:
+            await self._browser.connect()
+
     async def _producer_for_dashboard(self) -> Producer:
         """One Producer per dashboard page (a new page, e.g. after a restart, gets a new one)."""
+        await self._ensure_connected()
         page = await self._browser.dashboard_page()
         if self._producer is None or self._producer_page is not page:
             self._producer = Producer(
@@ -85,10 +92,12 @@ class FacebookAdapter:
         return await (await self._producer_for_dashboard()).go_live(timeout_s)
 
     async def open_comments(self, live_id: str) -> None:
+        await self._ensure_connected()
         url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
         self._comments_page = await self._browser.open_app_window(url)
 
     async def park_dashboard(self) -> None:
+        await self._ensure_connected()
         page = await self._browser.dashboard_page()
         timeout_ms = max(_GOTO_BLANK_MIN_S, self._cfg.timeouts.step_s) * 1000
         await page.goto("about:blank", timeout=timeout_ms)
@@ -165,11 +174,24 @@ class CaptureAdapter:
             await asyncio.wait({task})
             if not task.cancelled():
                 task.exception()  # mark retrieved
+        await self._close_popouts()
+
+    async def _close_popouts(self) -> None:
+        """Close and untrack the comments popout window(s): no pile-up across stream cycles."""
+        for page in list(self._browser.popout_pages):
+            self._browser.untrack_popout(page)
+            if page.is_closed():
+                continue
+            try:
+                await asyncio.wait_for(page.close(), _CLOSE_POPOUT_S)
+            except Exception as exc:  # TimeoutError included; stop() must never raise
+                log.warning("closing the comments popout failed: %r", exc)
 
     # ---- helpers ------------------------------------------------------------
 
     async def _popout_page(self, live_id: str):
-        fragment = f"/{live_id}{S.COMMENTS_PATH_MARKER}"
+        fragment = S.popout_url_fragment(live_id)
+        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
         grace = min(_POPOUT_GRACE_S, self._cfg.timeouts.step_s)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + grace
@@ -178,12 +200,36 @@ class CaptureAdapter:
             if page is not None:
                 self._browser.track_popout(page)
                 return page
+            page = self._redirected_popout()
+            if page is not None:
+                # A popout we opened earlier whose URL no longer matches (a redirect or
+                # navigation away): reuse it instead of piling up another window.
+                log.info("reusing the comments popout (URL does not match); navigating it back")
+                try:
+                    await page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=self._cfg.timeouts.step_s * 1000,
+                    )
+                except Exception as exc:
+                    log.warning("navigating the popout failed: %r", exc)
+                return page
             if loop.time() >= deadline:
                 break
             await asyncio.sleep(_POLL_S)
         log.info("comments popout for live %s not open; opening it", live_id)
-        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
         return await self._browser.open_app_window(url, timeout_s=self._cfg.timeouts.step_s)
+
+    def _redirected_popout(self):
+        """An open tracked popout page whose URL is not a comments popout URL (of any live).
+
+        A tracked popout that IS a popout URL but belongs to another live is a stale
+        window and is not reused.
+        """
+        for page in self._browser.open_popouts():
+            if not S.is_popout_url(page.url or ""):
+                return page
+        return None
 
     def _start_ssn(self) -> None:
         ssn = self._cfg.ssn
