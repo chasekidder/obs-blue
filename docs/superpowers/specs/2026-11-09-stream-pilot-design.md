@@ -280,7 +280,7 @@ These never go in the repo or the image:
 ## Remote access and observability
 
 - **Tailscale** (already in the image) plus SSH key access for the `stream` user.
-- **RustDesk** (Flatpak) for unattended desktop access. An XDG autostart entry starts `rustdesk --server` at login and pre-authorizes it in the `kde-authorized` portal permission table (Plasma 6.3+), since the remote-desktop portal cannot persist a grant. It is not a systemd user unit because `flatpak run` moves the app into its own scope. **NanoKVM** is the guaranteed fallback.
+- **RustDesk** (Flatpak) for unattended desktop access. An XDG autostart entry starts RustDesk at login (no arguments, so the app runs the connection server itself) and pre-authorizes it in the `kde-authorized` portal permission table (Plasma 6.3+), since the remote-desktop portal cannot persist a grant. It must not run `rustdesk --server`: RustDesk then assumes a root service injects input through `/dev/uinput`, which a Flatpak can't reach, and opens a view-only ScreenCast session. A forced KWin rule keeps the RustDesk window minimized. It is not a systemd user unit because `flatpak run` moves the app into its own scope. **NanoKVM** is the guaranteed fallback.
 - `stream-pilot status` prints the state, the last error, memory readings, and the current live ID.
 
 ## Testing

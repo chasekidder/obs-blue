@@ -53,7 +53,7 @@ Do this once, after the first boot from the ISO. After that, boots need no inter
 
 - [ ] **Facebook login:** the status key shows `LOG IN` until the stream-pilot Chromium profile is logged in. In the stream-pilot Chromium window, log in to Facebook once, including 2FA. The session lives only in `~/.local/share/stream-pilot/chromium/`.
 - [ ] **Social Stream Ninja (SSN):** in the SSN extension, import the settings backup (`.data` file), then turn on **Enable remote API control** and **Send chat messages to API server**.
-- [ ] **RustDesk:** it starts at login (`/etc/xdg/autostart/com.rustdesk.RustDesk.desktop`) and is pre-authorized for Plasma's remote-desktop portal, so nobody has to click Allow. Open RustDesk from the tray once and set a **permanent password** (Settings → Security), then connect from another computer to check.
+- [ ] **RustDesk:** it starts at login (`/etc/xdg/autostart/com.rustdesk.RustDesk.desktop`) and is pre-authorized for Plasma's remote-desktop portal, so nobody has to click Allow. A window rule keeps its window minimized, so to set a **permanent password** first untick "stream-pilot: RustDesk starts minimized" in System Settings → Window Management → Window Rules, open RustDesk, set the password (Settings → Security), close the window and tick the rule again. Then connect from another computer and check that both the picture and the mouse work.
 - [ ] **Camera and microphone IDs:** the names can differ from the old Debian install, so take them from this image:
   ```
   pactl list short sources
