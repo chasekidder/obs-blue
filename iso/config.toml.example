@@ -66,7 +66,7 @@ StartLimitBurst=10
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/tailscale up --auth-key=file:/etc/stream-pilot/tailscale-authkey --hostname=stream-pc --ssh=false
+ExecStart=/usr/bin/tailscale up --login-server=https://headscale.chasekidder.com --auth-key=file:/etc/stream-pilot/tailscale-authkey --hostname=stream-pc --ssh=false
 ExecStartPost=/usr/bin/rm -f /etc/stream-pilot/tailscale-authkey
 Restart=on-failure
 RestartSec=30
