@@ -11,7 +11,7 @@
                 "device_id": "@MICROPHONE_DEVICE@"
             },
             "mixers": 255,
-            "sync": 0,
+            "sync": 140000000,
             "flags": 0,
             "volume": 0.43371039628982544,
             "balance": 0.5,

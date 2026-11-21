@@ -133,6 +133,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
 - **Defaults** in `/usr/share/stream-pilot/obs/` start from the exported `FB_Live` profile and `Untitled` scene collection, with these changes:
   - Stream encoder: `ffmpeg_vaapi_tex` (zero-copy VAAPI H.264), CBR 6000, keyframe every 2 s. QuickSync is the fallback.
   - Audio encoder: `ffmpeg_aac` at 160, since libfdk AAC is not in the Fedora build. Audio runs at 48 kHz, matching PipeWire and the USB mic (the export used 44.1 kHz).
+  - The Microphone source has a +140 ms sync offset. A clap test on the stream PC (C920 at 30 fps, USB mic) put the picture 130-160 ms behind the sound; the export had 0. Re-measure if the camera or microphone changes.
   - A udev rule sets `exposure_dynamic_framerate=0` on every UVC camera when it appears. The C920s power up with it on and drop to 15 fps in room light (measured on the stream PC), which made camera latency shift and audio and video drift apart. OBS does not re-apply stored camera controls on open, so it can't live in the scene collection.
   - Camera sources use `/dev/v4l/by-id/...-video-index0` paths (main = Logitech, jewelry = second camera). If both cameras are the same model without serial numbers, `/dev/v4l/by-path/...` (USB port) is used instead.
   - Only `user.ini` is seeded, with its `[Locations]` section removed. The exported `global.ini` points at the Flatpak's config folders and is dropped.
