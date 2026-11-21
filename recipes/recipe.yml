@@ -43,6 +43,11 @@ modules:
       packages:
         - firefox
         - firefox-langpacks # also remove firefox dependency (not required for all packages, this is a special case)
+        # KDE Connect: the system tray applet D-Bus-activates kdeconnectd (~60 MB, UDP 1716)
+        # despite the hidden autostart. Nothing else depends on these three.
+        - kde-connect
+        - kde-connect-libs
+        - kdeconnectd
 
   - type: files
     files:

@@ -42,6 +42,10 @@ if rpm -q obs-studio-plugin-browser; then
   echo "obs-studio-plugin-browser must not be installed (no CEF)" >&2
   exit 1
 fi
+if rpm -q kdeconnectd; then
+  echo "kdeconnectd must not be installed (the tray applet D-Bus-activates it)" >&2
+  exit 1
+fi
 test -x /usr/bin/chromium-browser
 '
 

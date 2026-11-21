@@ -56,7 +56,7 @@ Recorded 2026-11-09 from `ghcr.io/ublue-os/kinoite-main@sha256:b3f2da878171cd80c
 | VAAPI driver | `libva-intel-media-driver` 26.4.0 (negativo17 fedora-multimedia) | — (`intel-media-driver` doesn't exist) |
 | ffmpeg | `ffmpeg` 8.1.3 (negativo17, full codecs) | `ffmpeg-free` is not installed |
 | firefox, firefox-langpacks | installed | removed by the recipe |
-| kdeconnect-kde | **not installed** | — |
+| kdeconnect-kde | **not installed** under that name; Fedora 44 ships it as `kde-connect`, `kde-connect-libs`, `kdeconnectd` (26.08.2), found on hardware 2026-11-21 | removed in the recipe |
 | plasma-discover-notifier | installed | its autostart is hidden in Task 3 rather than removed, because removing it may pull out plasma-discover deps |
 | RustDesk | no RPM in the repos | Flatpak `com.rustdesk.RustDesk` (see Task 2) |
 
@@ -98,7 +98,7 @@ podman build -f /tmp/obs-blue.Containerfile -t localhost/obs-blue:dev .
 2. **Updates:** keep ublue's `rpm-ostreed-automatic` with an explicit `AutomaticUpdatePolicy=stage`. Disable both Flatpak update timers.
 3. **greenboot** is available (0.16.4), so it is installed and the health check goes to `/etc/greenboot/check/required.d/`.
 4. **VAAPI driver:** `libva-intel-media-driver` is already in the base and is listed explicitly in the recipe.
-5. **No `kdeconnect-kde` to remove.** Its autostart is hidden anyway. `plasma-discover-notifier` is hidden, not removed.
+5. **KDE Connect is removed in the recipe** (`kde-connect`, `kde-connect-libs`, `kdeconnectd`). Hiding the autostart is not enough: the system tray's KDE Connect applet D-Bus-activates `kdeconnectd`. `plasma-discover-notifier` is hidden, not removed.
 6. **oomd:** the override goes in `/usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf` and not in `user@.service.d/`.
 7. **Module order:** `dnf` runs before `files`, so package files never overwrite our `/etc` overrides, and editing `files/` doesn't invalidate the package-install layer cache.
 
