@@ -108,6 +108,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - `--hide-crash-restore-bubble`
   - `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`, so the comments popout keeps updating while OBS has focus
   - `--ozone-platform=wayland`
+  - `--password-store=basic`: with autologin there is no login password to unlock KWallet, so Chromium would otherwise open the KDE Wallet setup wizard on every boot. `/etc/xdg/kwalletrc` also disables KWallet for the session.
 - **No "Restore pages?" prompt:**
   - `ExecStartPre` rewrites `"exit_type":"Crashed"` to `Normal` and `"exited_cleanly":false` to `true` in the profile's `Preferences`.
   - Policy sets the startup page to `about:blank` only, so a Chromium restart never reopens the heavy dashboard. stream-pilot opens every page itself.

@@ -5,4 +5,5 @@ exec "${CHROMIUM_BIN:-/usr/bin/chromium-browser}" \
   --hide-crash-restore-bubble --no-first-run --no-default-browser-check \
   --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
   --disable-background-timer-throttling --ozone-platform=wayland \
+  --password-store=basic \
   "$@"
