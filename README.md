@@ -26,7 +26,7 @@ To rebase an existing atomic Fedora installation to the tested build (`:stable`)
   systemctl reboot
   ```
 
-CI builds `:latest` every day. The `:stable` tag only moves when you promote a tested build (see [Promoting a build](#promoting-a-build)), and the stream PC follows `:stable`. Builds always use the Fedora version specified in `recipe.yml`, so you won't get accidentally updated to the next major version.
+CI builds `:latest` on every push to `main` (and on demand: **Actions → bluebuild → Run workflow**, e.g. to pick up base-image updates). The `:stable` tag only moves when you promote a tested build (see [Promoting a build](#promoting-a-build)), and the stream PC follows `:stable`. Builds always use the Fedora version specified in `recipe.yml`, so you won't get accidentally updated to the next major version.
 
 ## Updates and rollback
 
@@ -37,7 +37,7 @@ CI builds `:latest` every day. The `:stable` tag only moves when you promote a t
 
 ## Promoting a build
 
-`:latest` is built daily by CI. After you have tested a build, promote its digest to `:stable`:
+`:latest` is built by CI on every push to `main`. After you have tested a build, promote its digest to `:stable`:
 
 1. Find the digest of the `:latest` build you tested:
    ```
