@@ -3,3 +3,7 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 # ACPI power button event devices: read by stream-pilot (evdev)
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Power Button", TAG+="uaccess"
+# UVC cameras (the C920s) power up with exposure_dynamic_framerate=1: in low light they drop to
+# 15 fps under OBS's 30 fps canvas and their latency shifts, so audio and video drift apart.
+# OBS does not re-apply stored camera controls when it opens a device, so set it on every plug.
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_USB_DRIVER}=="uvcvideo", RUN+="/usr/bin/v4l2-ctl -d $devnode --set-ctrl=exposure_dynamic_framerate=0"

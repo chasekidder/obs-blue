@@ -94,6 +94,8 @@ group "system configuration files" '
 test -f /usr/lib/sysctl.d/90-stream-pilot-zram.conf
 test -f /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf
 test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
+grep -q "exposure_dynamic_framerate=0" /usr/lib/udev/rules.d/70-stream-pilot.rules
+grep -qx "SampleRate=48000" /usr/share/stream-pilot/obs/basic/profiles/FB_Live/basic.ini
 test -f /etc/xdg/kwinrulesrc
 grep -qx "Enabled=false" /etc/xdg/kwalletrc
 grep -q -- "--password-store=basic" /usr/libexec/stream-pilot/chromium-launch
