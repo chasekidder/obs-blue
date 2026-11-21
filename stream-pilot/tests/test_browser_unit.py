@@ -70,6 +70,8 @@ class FakeSession:
             await hook(method, params or {})
         if method in self.owner.send_raises:
             raise self.owner.send_raises[method]
+        if method == "Target.getTargets":
+            return {"targetInfos": list(self.owner.targets)}
         return {"targetId": "T1"}
 
     async def detach(self) -> None:
@@ -95,6 +97,8 @@ class FakeBrowser:
         self.sessions: list[FakeSession] = []
         self.on_send = None
         self.send_raises: dict[str, Exception] = {}
+        # CDP Target.getTargets: unlike context.pages, it lists chrome-extension:// tabs
+        self.targets: list[dict] = []
 
     def is_connected(self) -> bool:
         return self.connected
@@ -549,11 +553,38 @@ async def test_ssn_helper_tab_opened_in_background_when_extension_installed(cfg)
 
 
 async def test_ssn_helper_tab_not_duplicated(cfg):
+    # Playwright's context.pages omits extension tabs over CDP, so the open helper
+    # is only visible as a CDP target.
     write_manifest(cfg.cdp.user_data_dir, "1_0", {"action": {"default_popup": "menu.html"}})
-    helper = FakePage(f"chrome-extension://{SSN_EXTENSION_ID}/menu.html")
-    b, ctx, fb = make_browser(cfg, [helper])
+    b, ctx, fb = make_browser(cfg, [FakePage()])
+    fb.targets = [
+        {"type": "page", "url": "about:blank"},
+        {"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/menu.html"},
+    ]
     await b._open_ssn_helper()
-    assert fb.calls == []
+    assert "Target.createTarget" not in [m for m, _ in fb.calls]
+
+
+async def test_ssn_helper_not_confused_by_other_extension_pages(cfg):
+    write_manifest(cfg.cdp.user_data_dir, "1_0", {"action": {"default_popup": "menu.html"}})
+    b, ctx, fb = make_browser(cfg)
+    fb.targets = [
+        {"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/background.html"},
+        {"type": "service_worker", "url": f"chrome-extension://{SSN_EXTENSION_ID}/menu.html"},
+    ]
+    await b._open_ssn_helper()
+    want = f"chrome-extension://{SSN_EXTENSION_ID}/menu.html"
+    assert ("Target.createTarget", {"url": want, "background": True}) in fb.calls
+
+
+async def test_ssn_helper_opened_when_targets_cannot_be_listed(cfg):
+    # A missing helper loses SSN comments; a duplicate only costs memory.
+    write_manifest(cfg.cdp.user_data_dir, "1_0", {"action": {"default_popup": "menu.html"}})
+    b, ctx, fb = make_browser(cfg)
+    fb.send_raises["Target.getTargets"] = RuntimeError("nope")
+    await b._open_ssn_helper()  # no raise
+    want = f"chrome-extension://{SSN_EXTENSION_ID}/menu.html"
+    assert ("Target.createTarget", {"url": want, "background": True}) in fb.calls
 
 
 async def test_ssn_helper_absent_extension_does_nothing(cfg):

@@ -439,11 +439,10 @@ class CdpBrowser:
             if url is None:
                 log.debug("SSN extension not found in %s; no helper tab", self.cfg.user_data_dir)
                 return
-            marker = f"chrome-extension://{SSN_EXTENSION_ID}/"
-            if any((p.url or "").startswith(marker) for p in self._open_pages()):
+            session = await self._browser_session()
+            if await self._ssn_helper_open(session, url):
                 return
             before = set(self._open_pages())
-            session = await self._browser_session()
             await session.send("Target.createTarget", {"url": url, "background": True})
             log.info("opened the SSN helper tab")
             # Remember its page so the app-window adoption never takes it (its URL may
@@ -458,6 +457,25 @@ class CdpBrowser:
                 await asyncio.sleep(self.poll_s)
         except Exception as exc:
             log.warning("could not open the SSN helper tab: %r", exc)
+
+    @staticmethod
+    async def _ssn_helper_open(session: Any, url: str) -> bool:
+        """True if a tab already shows the helper page.
+
+        Asks CDP rather than ``context.pages``: Playwright leaves chrome-extension://
+        tabs out of it, so every reconnect used to add another helper tab. The path
+        must match exactly, since SSN's own background.html is also a page target.
+        """
+        try:
+            targets = (await session.send("Target.getTargets")).get("targetInfos", [])
+        except Exception as exc:
+            log.warning("cannot list tabs, opening the SSN helper anyway: %r", exc)
+            return False
+        want = url.split("#")[0].split("?")[0]
+        return any(
+            t.get("type") == "page" and (t.get("url") or "").split("#")[0].split("?")[0] == want
+            for t in targets
+        )
 
     # ---- network ------------------------------------------------------------
 
