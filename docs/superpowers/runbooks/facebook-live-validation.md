@@ -176,7 +176,7 @@ After a long-press end, the controller runs setup again (the same flow as part A
 1. Press the Stream Deck key to go live again (green -> red `LIVE`). Wait a minute, post a comment.
 2. Press the PC's **power button once** (a short press, not a hold).
 3. Expected, in order: key `ENDING`, OBS stops, Facebook ends the live, the report is written, Chromium closes, OBS stops, then the PC powers off. It should take well under a minute.
-4. If nothing happens, check that logind ignores the short press: `cat /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf` should show `HandlePowerKey=ignore`, and `journalctl --user -u stream-pilot -b` should show the power press arriving. A hold of about 2 seconds always powers off by force (`HandlePowerKeyLongPress=poweroff`), even if stream-pilot is hung.
+4. If nothing happens, check that logind ignores the short press: `cat /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf` should show `HandlePowerKey=ignore`, and `journalctl --user -u stream-pilot -b` should show the power press arriving. Even if stream-pilot is hung, `stream-pilot-power-guard.service` powers off cleanly 15 s after the press (up to 90 s more if stream-pilot is still ending the live); see `journalctl -u stream-pilot-power-guard -b`. Holding the button does nothing extra: this PC's button can't report a hold, and about 4 s triggers the firmware's hard power cut.
 5. Power the PC back on and wait for autologin and a green key.
 
 ### 8. Check `report.txt`

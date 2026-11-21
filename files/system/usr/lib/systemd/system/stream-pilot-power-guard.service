@@ -1,0 +1,19 @@
+[Unit]
+Description=Power off after a power-button press, even if stream-pilot is hung
+
+[Service]
+# Not /usr/bin/stream-pilot: it links to a lib_t script in the venv, and a lib_t
+# entrypoint leaves the service in init_t, which SELinux denies /dev/input. The venv
+# python resolves to the system interpreter (bin_t -> unconfined_service_t).
+ExecStart=/usr/lib/stream-pilot/venv/bin/python3 -m stream_pilot power-guard --user stream
+Restart=always
+RestartSec=5
+# Reads /dev/input and the stream user's status.json; calls systemctl poweroff.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateNetwork=yes
+
+[Install]
+WantedBy=multi-user.target

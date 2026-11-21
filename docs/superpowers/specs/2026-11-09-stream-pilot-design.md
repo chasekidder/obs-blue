@@ -70,7 +70,8 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - `/etc/xdg/kwinrulesrc` (window placement)
   - `/etc/xdg/` overrides that trim Plasma (see the memory plan)
   - `/etc/xdg/` defaults that turn off the lock screen, screen energy saving (blanking/DPMS), automatic sleep, and notification popups
-  - `/usr/lib/systemd/logind.conf.d/stream-pilot.conf` (`HandlePowerKey=ignore`, `HandlePowerKeyLongPress=poweroff`)
+  - `/usr/lib/systemd/logind.conf.d/90-stream-pilot.conf` (`HandlePowerKey=ignore`, `HandlePowerKeyLongPress=ignore`)
+  - `stream-pilot-power-guard.service` (root): a power-button press powers off even if stream-pilot is hung (see Ending)
   - `/usr/lib/udev/rules.d/` rules giving the seat user access to the Stream Deck and the "Power Button" input device
   - `/usr/lib/sysctl.d/` zram tuning
   - a systemd-oomd drop-in that turns off memory-pressure killing for the user session (see the memory plan)
@@ -205,10 +206,12 @@ OBS's own reconnect (`MaxRetries=25`, `RetryDelay=2`) handles short drops. When 
 ### Ending
 
 - **Power button while `LIVE`:** OBS `StopStream`, wait for the stopped event (10 s timeout), wait 5 s for Facebook to auto-end, write the stream's comparison report, close Chromium over CDP, stop OBS, then `systemctl poweroff`.
-- **Power button in any other state:** graceful close, then power off. A hardware long-hold still forces power off.
+- **Power button in any other state:** graceful close, then power off. If stream-pilot is hung, the power guard (below) powers off anyway.
 - **Long-press on `LIVE`:** the same stream stop without powering off, then back to `SETUP`.
 
-The power key only reaches stream-pilot because `HandlePowerKey=ignore` is set in logind and PowerDevil's power-button action is set to nothing. `HandlePowerKeyLongPress=poweroff` means a 2 s hold always powers off, even if stream-pilot is down or hung.
+The power key only reaches stream-pilot because `HandlePowerKey=ignore` is set in logind and PowerDevil's power-button action is set to nothing.
+
+A press always ends in a power-off, even if stream-pilot is down or hung: `stream-pilot-power-guard.service` (root, outside the session) reads the same evdev devices. 15 s after a press, if the PC is still up and stream-pilot's `status.json` doesn't say `ENDING`, it runs `systemctl poweroff`; a fresh `ENDING` gets up to 90 s more to end the live cleanly. There is no long-press path (found on the stream PC): the ACPI power button reports key down and up at the same instant however long it is held, logind takes no power-key action at all while PowerDevil holds its `handle-power-key` inhibitor, and holding ~4 s triggers the firmware's unclean power cut.
 
 ### Stream Deck (6-key)
 
@@ -297,7 +300,7 @@ These never go in the repo or the image:
 - **Image behavior** in a VM from the ISO:
   - autologin and unit ordering,
   - policies and the no-restore-prompt path,
-  - the power-key path, including the long-hold,
+  - the power-key path, including the power guard with stream-pilot stopped,
   - no lock, blanking, or sleep after idle,
   - zram/sysctl settings,
   - greenboot rollback, by promoting a deliberately broken image.

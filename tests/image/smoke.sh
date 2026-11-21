@@ -97,6 +97,8 @@ grep -q "ManagedOOMMemoryPressure=auto" /usr/lib/systemd/user/slice.d/90-stream-
 group "system configuration files" '
 test -f /usr/lib/sysctl.d/90-stream-pilot-zram.conf
 test -f /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf
+systemctl is-enabled stream-pilot-power-guard.service
+stream-pilot power-guard --help > /dev/null
 test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -q "exposure_dynamic_framerate=0" /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -qx "SampleRate=48000" /usr/share/stream-pilot/obs/basic/profiles/FB_Live/basic.ini

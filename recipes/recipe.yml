@@ -78,6 +78,7 @@ modules:
         - rpm-ostreed-automatic.timer # stage updates only (/etc/rpm-ostreed.conf); already enabled in the base
         - greenboot-healthcheck.service # not enabled by preset in this base
         - greenboot-set-rollback-trigger.service # arms boot_counter when an update is staged
+        - stream-pilot-power-guard.service # a power-button press powers off, even if stream-pilot is hung
       disabled:
         - flatpak-system-update.timer # no unattended flatpak updates
         - bootc-fetch-apply-updates.timer # runs `bootc upgrade --apply`, which reboots

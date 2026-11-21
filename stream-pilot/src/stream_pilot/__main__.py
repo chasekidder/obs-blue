@@ -18,6 +18,7 @@ from .app import run_app
 from .chromium_prep import prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
+from .power_guard import run_power_guard
 from .seed_obs import reset_scenes, seed_obs
 from .selftest import selftest_cdp
 
@@ -151,6 +152,11 @@ def cmd_chromium_prep(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_power_guard(args: argparse.Namespace) -> int:
+    """stream-pilot-power-guard.service (root): make every power-button press end in a power-off."""
+    return run_power_guard(args.user)
+
+
 def cmd_selftest_cdp(args: argparse.Namespace) -> int:
     """CI check: pinned Playwright must still attach to the image's Chromium."""
     chromium_bin = args.chromium_bin
@@ -177,6 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
         "health": (cmd_health, "wait for the system to be healthy"),
         "seed-obs": (cmd_seed_obs, "seed the OBS configuration"),
         "chromium-prep": (cmd_chromium_prep, "clear Chromium crash flags"),
+        "power-guard": (
+            cmd_power_guard,
+            "make a power-button press power off, even if the controller is hung",
+        ),
         "selftest-cdp": (
             cmd_selftest_cdp,
             "check that Playwright can attach to the system Chromium over CDP",
@@ -211,6 +221,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help="Chromium executable (default: cdp.chromium_bin from the config)",
+    )
+    parsers["power-guard"].add_argument(
+        "--user",
+        default="stream",
+        help="user whose stream-pilot status file is checked (default: %(default)s)",
     )
     parsers["health"].add_argument(
         "--timeout",
