@@ -12,9 +12,11 @@ if [ "$#" -ne 1 ]; then
 fi
 image="$1"
 
-# Secret patterns are written as bracket expressions so this file never
-# contains them literally (the repo-wide secret grep must stay clean).
-SECRET_RE='***REMOVED***|***REMOVED***|FB-[0-9]{6,}-'
+# Secrets are matched by shape, never by value, so no secret has to live in
+# this public repo: a filled-in secret-bearing config key, an obs-websocket
+# password, a Facebook stream key or a Tailscale key.
+SECRET_KEY_RE='^\s*(session_id|password|actor_id|group_id)\s*=\s*"[^"]+"|"server_password"\s*:\s*"[^"]+"'
+SECRET_TOKEN_RE='FB-[0-9]{6,}-|tskey-[A-Za-z0-9]'
 
 group() {  # group <title> <script>
   local title="$1" script="$2"
@@ -144,7 +146,9 @@ echo "seeded files:"
 '
 
 group "no secrets baked into the image" "
-if grep -rlE '${SECRET_RE}' /usr/share/stream-pilot /etc/stream-pilot /usr/lib/stream-pilot; then
+dirs='/usr/share/stream-pilot /etc/stream-pilot /usr/lib/stream-pilot'
+if grep -rlE --include='*.toml' --include='*.json' --include='*.ini' '${SECRET_KEY_RE}' \$dirs \
+   || grep -rlE '${SECRET_TOKEN_RE}' \$dirs; then
   echo 'secret-looking value found in the image (files listed above)' >&2
   exit 1
 fi

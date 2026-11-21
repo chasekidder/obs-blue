@@ -16,7 +16,7 @@
   - Never use `sudo`. Never run `rpm-ostree`, `bootc`, or `systemctl` against the host. Never enable or start any unit on the host.
   - Build only with rootless podman. Never `git push`, never push images. Keep at least 10 GB free in `/var/home` (`df -h /var/home`); prune dangling images after builds.
 - Image files go under `files/system/` (copied to `/` by the `files` module). Build scripts go under `files/scripts/`.
-- Secrets never enter the repo or the image: no stream key, websocket password, SSN session ID, Facebook IDs, cookies, password hashes, SSH keys, or Tailscale keys. Before every commit, run `git grep -nE '***REMOVED***|***REMOVED***|FB-[0-9]{6,}'`, which must return nothing.
+- Secrets never enter the repo or the image: no stream key, websocket password, SSN session ID, Facebook IDs, cookies, password hashes, SSH keys, or Tailscale keys. Before every commit, run `git grep -nE '^\s*(session_id|password|actor_id|group_id)\s*=\s*"[^"]+"|"server_password"\s*:\s*"[^"]+"|FB-[0-9]{6,}-|tskey-[A-Za-z0-9]'`, and review every hit: only the fake fixture values under `stream-pilot/tests/` and `<PLACEHOLDER>` examples may appear. Secrets are matched by shape, never by value, so no secret is ever written into this repo, not even inside a check.
 - Chromium extension IDs:
   - SSN: `cppibjhfemifednoimlblfcmjgfhfjeg`
   - uBlock Origin Lite: `ddkjiahejlhfcafbddmgiahcphecmpfh`
@@ -454,7 +454,7 @@ Add `--no-sandbox` only when running as root (container CI).
 - `systemd-analyze verify` on the three user units (fail only on syntax errors)
 - `sysctl` file present; logind drop-in present; udev rules present
 - `HOME=/tmp/h stream-pilot seed-obs` succeeds and produces no `[Locations]` in `user.ini`
-- `grep -rE '***REMOVED***|***REMOVED***' /usr/share/stream-pilot /etc/stream-pilot` finds nothing
+- The smoke test's "no secrets baked into the image" group finds nothing (it matches secrets by shape, not by value)
 - `obs --version` runs, or at least `rpm -ql obs-studio | grep -q obs-ffmpeg`, plus `ls /usr/lib64/obs-plugins | grep -E "obs-ffmpeg|obs-qsv"` to show which hardware encoders exist. Print the list for the report.
 
 `build.yml`: add a second job `smoke` (`needs: bluebuild`, `if: github.event_name != 'pull_request'`) that pulls `ghcr.io/${{ github.repository_owner }}/obs-blue:latest` and runs `bash tests/image/smoke.sh ghcr.io/${{ github.repository_owner }}/obs-blue:latest`.
