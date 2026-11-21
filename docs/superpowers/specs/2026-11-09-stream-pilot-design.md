@@ -116,6 +116,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
 - **Network:** Chromium starts immediately. stream-pilot checks that `https://www.facebook.com` answers before navigating (state `NO_NET`). This replaces the `ping google.com` loop.
 - **Managed policy:**
   - Force-install SSN and uBlock Origin Lite (MV3; classic uBlock Origin no longer runs in current Chromium).
+  - Block KDE's Plasma Integration extension (`cimiefiiaegbelhefglklhhakcgmhkai`), which the base's `plasma-browser-integration` installs into every Chromium profile as an external extension; it would add a service worker and media-control hooks.
   - Disable sync, translate, spellcheck, network prediction, background apps, password manager prompts, and Memory Saver tab discarding.
 - **Windows:**
 
