@@ -101,6 +101,7 @@ test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -q "exposure_dynamic_framerate=0" /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -qx "SampleRate=48000" /usr/share/stream-pilot/obs/basic/profiles/FB_Live/basic.ini
 test -f /etc/xdg/kwinrulesrc
+grep -q "kde-authorized remote-desktop com.rustdesk.RustDesk yes" /etc/xdg/autostart/com.rustdesk.RustDesk.desktop
 grep -qx "Enabled=false" /etc/xdg/kwalletrc
 grep -q -- "--password-store=basic" /usr/libexec/stream-pilot/chromium-launch
 test -f /etc/plasmalogin.conf.d/50-stream-autologin.conf

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustDesk (unattended access)
+# kde-authorized pre-authorizes RustDesk for the remote-desktop portal; without it every
+# connection after a boot waits for someone at the PC to click Allow. A systemd user unit
+# can't own the app: `flatpak run` moves it into its own app-flatpak-*.scope.
+# --server runs the connection server and spawns its tray icon.
+Exec=sh -c "flatpak permission-set kde-authorized remote-desktop com.rustdesk.RustDesk yes; exec flatpak run com.rustdesk.RustDesk --server"
+Icon=com.rustdesk.RustDesk
+NoDisplay=true
+X-KDE-autostart-phase=2
