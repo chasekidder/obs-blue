@@ -23,7 +23,9 @@ lang en_US.UTF-8
 keyboard us
 # Change if the PC is not on US Eastern time.
 timezone America/New_York --utc
-network --bootproto=dhcp --device=link --activate --onboot=on
+# A static hostname: without one it is "fedora" early in boot and "stream-pc.lan" after
+# DHCP, and Chromium treats a profile lock from the other name as held by another computer.
+network --bootproto=dhcp --device=link --activate --onboot=on --hostname=stream-pc
 
 # Unattended: wipe the first disk and let anaconda lay it out.
 zerombr

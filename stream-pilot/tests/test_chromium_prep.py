@@ -1,6 +1,7 @@
 import json
+import os
 
-from stream_pilot.chromium_prep import prep_chromium_profile
+from stream_pilot.chromium_prep import clear_singleton_lock, prep_chromium_profile
 
 
 def write_prefs(root, data):
@@ -54,6 +55,21 @@ def test_non_object_json_tolerated(tmp_path):
     p = write_prefs(tmp_path, {})
     p.write_text("[1,2]")
     assert prep_chromium_profile(tmp_path) is False
+
+
+def test_clear_singleton_lock_removes_dangling_lock_links(tmp_path):
+    # As left by a previous boot whose hostname differed ("fedora" vs "stream-pc.lan").
+    os.symlink("stream-pc.lan-3140", tmp_path / "SingletonLock")
+    os.symlink("14239420397549186689", tmp_path / "SingletonCookie")
+    os.symlink("/tmp/org.chromium.Chromium.gone/SingletonSocket", tmp_path / "SingletonSocket")
+    (tmp_path / "Local State").write_text("{}")
+    assert clear_singleton_lock(tmp_path) == ["SingletonCookie", "SingletonLock", "SingletonSocket"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["Local State"]
+
+
+def test_clear_singleton_lock_nothing_to_do(tmp_path):
+    assert clear_singleton_lock(tmp_path) == []
+    assert clear_singleton_lock(tmp_path / "absent") == []
 
 
 def test_profile_not_a_dict_is_replaced(tmp_path):

@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .app import run_app
-from .chromium_prep import prep_chromium_profile
+from .chromium_prep import clear_singleton_lock, prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
 from .power_guard import run_power_guard
@@ -146,6 +146,7 @@ def cmd_chromium_prep(_args: argparse.Namespace) -> int:
     try:
         cfg = _load_config()
         cfg.cdp.user_data_dir.mkdir(parents=True, exist_ok=True)
+        clear_singleton_lock(cfg.cdp.user_data_dir)
         prep_chromium_profile(cfg.cdp.user_data_dir)
     except Exception:
         log.exception("chromium-prep failed; continuing")

@@ -132,6 +132,10 @@ in the last bib README revision). Followed:
 - bib adds **no other** commands, so we supply `text --non-interactive`,
   `reboot`, `lang`, `keyboard`, `timezone`, `network`, disk layout, `rootpw`,
   and the user ourselves. Edit `timezone` if the PC is not on US Eastern time.
+- `network --hostname=stream-pc` sets a static hostname. Without it the PC is
+  `fedora` early in boot and `stream-pc.lan` once DHCP answers, and Chromium
+  refuses a profile whose lock names the other hostname ("in use by another
+  Chromium process on another computer"), so CDP never comes up.
 - `xconfig --startxonboot` is required: in a text install anaconda otherwise
   links `/etc/systemd/system/default.target` to `multi-user.target` ("no
   default systemd target set & in text/remote desktop mode" in

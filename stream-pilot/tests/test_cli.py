@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import tomllib
 
@@ -164,6 +165,14 @@ def test_chromium_prep_cli_creates_dir_and_fixes_prefs(home, tmp_path):
     assert main(["chromium-prep"]) == 0
     prof = json.loads((udd / "Default" / "Preferences").read_text())["profile"]
     assert prof == {"exit_type": "Normal", "exited_cleanly": True}
+
+
+def test_chromium_prep_cli_clears_stale_profile_lock(home):
+    udd = home / ".local" / "share" / "stream-pilot" / "chromium"
+    udd.mkdir(parents=True)
+    os.symlink("stream-pc.lan-3140", udd / "SingletonLock")
+    assert main(["chromium-prep"]) == 0
+    assert not (udd / "SingletonLock").is_symlink()
 
 
 def test_chromium_prep_cli_errors_exit_0(home, monkeypatch, caplog):

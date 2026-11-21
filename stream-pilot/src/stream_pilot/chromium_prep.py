@@ -1,4 +1,4 @@
-"""Clear Chromium's crash flags so it never offers to "Restore pages?"."""
+"""Clear Chromium's crash flags so it never offers to "Restore pages?", and its stale profile lock."""
 
 from __future__ import annotations
 
@@ -9,6 +9,33 @@ from pathlib import Path
 from ._atomic import atomic_write_text
 
 log = logging.getLogger(__name__)
+
+_SINGLETON_FILES = ("SingletonCookie", "SingletonLock", "SingletonSocket")
+
+
+def clear_singleton_lock(user_data_dir: Path) -> list[str]:
+    """Remove the profile lock links a previous Chromium left behind; return their names.
+
+    Only safe before chromium.service starts the browser (its ExecStartPre), when
+    nothing can hold the profile. Chromium clears a dead lock itself only if the
+    hostname in it matches, and the hostname changes early in boot (``fedora``
+    until DHCP sets ``stream-pc.lan``), so a stale lock can block the profile with
+    "in use by another Chromium process on another computer" and no CDP port.
+    """
+    removed = []
+    for name in _SINGLETON_FILES:
+        path = Path(user_data_dir) / name
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            log.warning("cannot remove stale Chromium %s: %s", path, exc)
+            continue
+        removed.append(name)
+    if removed:
+        log.info("removed stale Chromium profile lock: %s", ", ".join(removed))
+    return removed
 
 
 def prep_chromium_profile(user_data_dir: Path) -> bool:
