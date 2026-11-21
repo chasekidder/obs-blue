@@ -119,6 +119,14 @@ if grep -rE "@(MAIN_CAMERA_DEVICE|JEWELRY_CAMERA_DEVICE|MICROPHONE_DEVICE)@" "$o
   echo "unresolved device placeholder in seeded OBS config" >&2
   exit 1
 fi
+python3 - "$obs_dir/basic/profiles/FB_Live/streamEncoder.json" <<"PY"
+import json, sys
+profile = json.load(open(sys.argv[1]))["profile"]
+# ffmpeg_vaapi_tex reads an FFmpeg profile number (100 = H.264 High); a string
+# such as "high" reads as 0 and the encoder fails to open (ENOSYS).
+if not isinstance(profile, int) or isinstance(profile, bool):
+    sys.exit(f"streamEncoder.json profile must be an FFmpeg profile number, got {profile!r}")
+PY
 test -f "$obs_dir/plugin_config/obs-websocket/config.json"
 python3 -m json.tool "$obs_dir/plugin_config/obs-websocket/config.json" > /dev/null
 test -f "$HOME/.config/stream-pilot/secrets.toml"

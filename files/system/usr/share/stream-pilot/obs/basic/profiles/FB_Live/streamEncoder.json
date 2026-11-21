@@ -2,5 +2,5 @@
   "rate_control": "CBR",
   "bitrate": 6000,
   "keyint_sec": 2,
-  "profile": "high"
+  "profile": 100
 }
