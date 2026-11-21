@@ -1,4 +1,4 @@
-# BlueBuild OBS Image &nbsp; [![bluebuild build badge](https://github.com/blue-build/template/actions/workflows/build.yml/badge.svg)](https://github.com/blue-build/template/actions/workflows/build.yml)
+# obs-blue &nbsp; [![bluebuild build badge](https://github.com/chasekidder/obs-blue/actions/workflows/build.yml/badge.svg)](https://github.com/chasekidder/obs-blue/actions/workflows/build.yml)
 
 A dedicated bootc image for running OBS and allowing stream automation.
 
@@ -86,5 +86,5 @@ If build on Fedora Atomic, you can generate an offline ISO with the instructions
 These images are signed with [Sigstore](https://www.sigstore.dev/)'s [cosign](https://github.com/sigstore/cosign). You can verify the signature by downloading the `cosign.pub` file from this repo and running the following command:
 
 ```bash
-cosign verify --key cosign.pub ghcr.io/blue-build/template
+cosign verify --key cosign.pub ghcr.io/chasekidder/obs-blue:stable
 ```

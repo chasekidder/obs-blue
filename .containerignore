@@ -6,5 +6,7 @@ stream-pilot/.venv
 .superpowers
 orig_scripts
 site
+iso/config.toml
+.bluebuild-scripts_*
 output
 *.iso
