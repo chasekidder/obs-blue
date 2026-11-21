@@ -96,6 +96,7 @@ test -f /usr/lib/systemd/logind.conf.d/90-stream-pilot.conf
 test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
 test -f /etc/xdg/kwinrulesrc
 test -f /etc/plasmalogin.conf.d/50-stream-autologin.conf
+test -f /etc/plasma-setup-done
 test -x /etc/greenboot/check/required.d/50-stream-pilot.sh
 bash -n /etc/greenboot/check/required.d/50-stream-pilot.sh
 test -f /etc/stream-pilot/config.toml

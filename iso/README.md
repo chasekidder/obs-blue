@@ -132,6 +132,12 @@ in the last bib README revision). Followed:
 - bib adds **no other** commands, so we supply `text --non-interactive`,
   `reboot`, `lang`, `keyboard`, `timezone`, `network`, disk layout, `rootpw`,
   and the user ourselves. Edit `timezone` if the PC is not on US Eastern time.
+- `xconfig --startxonboot` is required: in a text install anaconda otherwise
+  links `/etc/systemd/system/default.target` to `multi-user.target` ("no
+  default systemd target set & in text/remote desktop mode" in
+  `/var/log/anaconda/anaconda.log`), which overrides the image's
+  `graphical.target`, so Plasma Login Manager never starts and the greenboot
+  check fails on every boot.
 - `%post` is a normal kickstart `%post ... %end` block inside `contents`. It
   runs chrooted into the installed system, so paths are the installed
   system's (`/var/home/stream`, since `/home` is a symlink to `/var/home` on

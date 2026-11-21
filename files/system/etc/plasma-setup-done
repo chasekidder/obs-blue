@@ -1,0 +1,4 @@
+# Skips the Plasma Setup first-run wizard (plasma-setup.service has
+# ConditionPathExists=!/etc/plasma-setup-done). Without this flag it runs on every
+# boot and writes /etc/plasmalogin.conf.d/99-plasma-setup.conf, which overrides
+# the stream autologin with the plasma-setup user.
