@@ -280,10 +280,25 @@ class FakeSystem(Gated):
 
 
 class FakeCamera(Gated):
-    def __init__(self, *, raises: Any = None, calls: list | None = None):
+    def __init__(
+        self,
+        *,
+        raises: Any = None,
+        calls: list | None = None,
+        autofocus: dict[str, bool] | None = None,
+    ):
         self._init_gated()
         self.calls: list[tuple] = calls if calls is not None else []
         self._raises = Script(raises)
+        # None: the camera port is not read at all (get_autofocus not recorded)
+        self._autofocus = autofocus
+
+    async def get_autofocus(self, device: str) -> bool | None:
+        if self._autofocus is None:
+            return None
+        self.calls.append(("camera.get_autofocus", device))
+        await self._gated("get_autofocus")
+        return self._autofocus.get(device)
 
     async def set_autofocus(self, device: str, on: bool) -> None:
         self.calls.append(("camera.set_autofocus", device, on))

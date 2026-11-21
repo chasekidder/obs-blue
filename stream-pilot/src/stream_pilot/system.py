@@ -2,7 +2,8 @@
 
 Both run an external command via an injectable `exec_fn`
 (default `asyncio.create_subprocess_exec`). stdout/stderr are sent to DEVNULL
-(we only care about the exit code, and PIPE without draining could block).
+(we only care about the exit code, and PIPE without draining could block),
+except `V4l2Camera.get_autofocus`, which drains stdout with `communicate()`.
 A non-zero exit or a missing binary is logged at WARNING and never raised:
 a failed autofocus tweak or unit stop must not crash the controller.
 """
@@ -51,3 +52,21 @@ class V4l2Camera:
             self._exec,
             ["v4l2-ctl", "-d", device, f"--set-ctrl=focus_automatic_continuous={value}"],
         )
+
+    async def get_autofocus(self, device: str) -> bool | None:
+        """Continuous autofocus on/off, or None if it can't be read."""
+        argv = ["v4l2-ctl", "-d", device, "--get-ctrl=focus_automatic_continuous"]
+        try:
+            proc = await self._exec(
+                *argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+            out, _ = await proc.communicate()
+        except OSError as e:
+            log.warning("cannot run %s: %s", argv, e)
+            return None
+        if proc.returncode != 0:
+            log.warning("%s exited with status %s", argv, proc.returncode)
+            return None
+        # v4l2-ctl prints "focus_automatic_continuous: 1"
+        value = out.decode(errors="replace").rpartition(":")[2].strip()
+        return {"1": True, "0": False}.get(value)

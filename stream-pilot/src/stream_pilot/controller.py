@@ -544,6 +544,7 @@ class Controller:
                 try:
                     await self.obs.connect()
                     self._obs_ok = True
+                    await self._sync_camera_faces()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -891,6 +892,37 @@ class Controller:
             return
         self._active_camera = cam
         self._autofocus[cam] = want
+        self._show_camera_faces()
+        self._show_autofocus()
+
+    async def _sync_camera_faces(self) -> None:
+        """Show the camera OBS is on and its real autofocus state.
+
+        Cameras keep their own control values (a C920 powers up with continuous
+        autofocus on), so assuming "off" would make the first AF press a no-op.
+        """
+        try:
+            scene = await self._bounded("current_scene", self.obs.current_scene())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("current_scene failed: %r", exc)
+            return
+        cam = next((n for n, c in self.cfg.cameras.items() if c.scene == scene), None)
+        if cam is None:
+            return
+        try:
+            on = await self._bounded(
+                "get_autofocus", self.camera.get_autofocus(self.cfg.cameras[cam].device)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("get_autofocus failed: %r", exc)
+            on = None
+        self._active_camera = cam
+        if on is not None:
+            self._autofocus[cam] = on
         self._show_camera_faces()
         self._show_autofocus()
 

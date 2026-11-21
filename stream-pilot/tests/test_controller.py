@@ -215,6 +215,7 @@ async def test_happy_path_reaches_ready_in_order(make):
     assert rig.c.state == State.READY
     assert rig.shared == [
         ("obs.connect",),
+        ("obs.current_scene",),
         ("fb.connect",),
         ("fb.reachable",),
         ("fb.logged_in",),
@@ -775,7 +776,8 @@ async def test_resume_while_live_never_touches_setup_or_stream(make, saved_state
     assert rig.c.state == State.LIVE
     assert rig.c.live_id == "42"
     assert rig.capture.calls == [("capture.start", "42", stream_dir)]
-    assert rig.names(rig.obs) == ["obs.connect", "obs.stream_active"]
+    # current_scene is the read-only camera-key sync; nothing touches the stream
+    assert rig.names(rig.obs) == ["obs.connect", "obs.current_scene", "obs.stream_active"]
     assert rig.names(rig.fb) == ["fb.connect"]
     assert "STARTING" not in rig.store.states  # live_id must survive another crash
     assert rig.state_json == {"state": "LIVE", "live_id": "42", "stream_dir": str(stream_dir)}
@@ -1011,6 +1013,43 @@ async def test_autofocus_key_unknown_scene_falls_back_to_main(make):
     assert rig.camera.calls == [("camera.set_autofocus", "/dev/video0", True)]
 
 
+async def test_connect_shows_live_camera_and_its_real_autofocus(make):
+    rig = make(
+        obs=FakeObs(scene="Jewlery Camera"),
+        camera=FakeCamera(autofocus={"/dev/video2": True}),
+    )
+    await rig.to_ready()
+    assert ("camera.get_autofocus", "/dev/video2") in rig.camera.calls
+    assert rig.deck.faces[1] == KeyFace("AF\nON", "#1e9e3e")
+    assert rig.deck.faces[5].bg == "#1f5fbf"
+    assert rig.deck.faces[2].bg == "#333333"
+
+
+async def test_first_autofocus_press_toggles_the_real_state(make):
+    rig = make(camera=FakeCamera(autofocus={"/dev/video0": True}))
+    await rig.to_ready()
+    await rig.c.handle(DeckPress(1))
+    assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video0", False)
+    assert rig.deck.faces[1] == KeyFace("AF\nOFF", "#555555")
+
+
+async def test_connect_with_non_camera_scene_marks_no_camera(make):
+    rig = make(obs=FakeObs(scene="Black"), camera=FakeCamera(autofocus={"/dev/video0": True}))
+    await rig.to_ready()
+    assert rig.camera.calls == []
+    assert rig.deck.faces[1].label == "AF\nOFF"
+    assert rig.deck.faces[2].bg == "#333333" and rig.deck.faces[5].bg == "#333333"
+
+
+async def test_unreadable_autofocus_keeps_assumed_off(make):
+    rig = make(camera=FakeCamera(autofocus={}))
+    await rig.to_ready()
+    assert rig.deck.faces[2].bg == "#1f5fbf"
+    assert rig.deck.faces[1].label == "AF\nOFF"
+    await rig.c.handle(DeckPress(1))
+    assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video0", True)
+
+
 async def test_camera_errors_are_logged_not_raised(make):
     rig = make(camera=FakeCamera(raises=RuntimeError("v4l2")))
     await rig.c.boot()
@@ -1022,9 +1061,9 @@ async def test_camera_errors_are_logged_not_raised(make):
 async def test_scene_failure_skips_autofocus(make):
     rig = make(obs=FakeObs(set_scene_raises=RuntimeError("ws")))
     await rig.c.boot()
-    await rig.c.handle(DeckPress(2))
+    await rig.c.handle(DeckPress(5))
     assert rig.camera.calls == []
-    assert rig.deck.faces[2].bg == "#333333"
+    assert rig.deck.faces[5].bg == "#333333"
 
 
 async def test_camera_keys_work_while_live_without_changing_state(rig):
@@ -1244,9 +1283,9 @@ async def test_hung_live_poll_means_no_action(rig, short_inline_timeout):
 async def test_hung_set_scene_does_not_block_handle(rig, short_inline_timeout):
     await rig.c.boot()
     rig.obs.gates["set_scene"] = asyncio.Event()
-    await asyncio.wait_for(rig.c.handle(DeckPress(2)), 2)
+    await asyncio.wait_for(rig.c.handle(DeckPress(5)), 2)
     assert rig.camera.calls == []
-    assert rig.deck.faces[2].bg == "#333333"
+    assert rig.deck.faces[5].bg == "#333333"
 
 
 async def test_hung_autofocus_does_not_block_handle(rig, short_inline_timeout):

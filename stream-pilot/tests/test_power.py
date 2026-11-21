@@ -199,26 +199,31 @@ async def test_default_sink_is_noop():
 
 
 class FakeProc:
-    def __init__(self, returncode=0):
+    def __init__(self, returncode=0, stdout=b""):
         self.returncode = returncode
+        self.stdout = stdout
 
     async def wait(self):
         return self.returncode
 
+    async def communicate(self):
+        return self.stdout, b""
+
 
 class FakeExec:
-    def __init__(self, returncode=0, raises=None):
+    def __init__(self, returncode=0, raises=None, stdout=b""):
         self.calls = []
         self.kwargs = []
         self.returncode = returncode
         self.raises = raises
+        self.stdout = stdout
 
     async def __call__(self, *argv, **kwargs):
         self.calls.append(list(argv))
         self.kwargs.append(kwargs)
         if self.raises:
             raise self.raises
-        return FakeProc(self.returncode)
+        return FakeProc(self.returncode, self.stdout)
 
 
 async def test_systemctl_poweroff_argv():
@@ -249,6 +254,28 @@ async def test_v4l2_autofocus_off_argv():
     assert ex.calls == [
         ["v4l2-ctl", "-d", "/dev/video2", "--set-ctrl=focus_automatic_continuous=0"]
     ]
+
+
+@pytest.mark.parametrize("out, want", [
+    (b"focus_automatic_continuous: 1\n", True),
+    (b"focus_automatic_continuous: 0\n", False),
+    (b"garbage\n", None),
+])
+async def test_v4l2_get_autofocus_parses_value(out, want):
+    ex = FakeExec(stdout=out)
+    assert await V4l2Camera(exec_fn=ex).get_autofocus("/dev/video0") is want
+    assert ex.calls == [
+        ["v4l2-ctl", "-d", "/dev/video0", "--get-ctrl=focus_automatic_continuous"]
+    ]
+    assert ex.kwargs[0]["stdout"] == subprocess.PIPE
+
+
+async def test_v4l2_get_autofocus_failure_is_none(caplog):
+    with caplog.at_level(logging.WARNING):
+        assert await V4l2Camera(exec_fn=FakeExec(returncode=1)).get_autofocus("/dev/video0") is None
+        missing = FakeExec(raises=FileNotFoundError(2, "No such file", "v4l2-ctl"))
+        assert await V4l2Camera(exec_fn=missing).get_autofocus("/dev/video0") is None
+    assert sum(r.levelno == logging.WARNING for r in caplog.records) == 2
 
 
 async def test_nonzero_exit_logged_not_raised(caplog):
