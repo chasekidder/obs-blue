@@ -6,7 +6,7 @@
   "ExtensionInstallBlocklist": [
     "cimiefiiaegbelhefglklhhakcgmhkai"
   ],
-  "RestoreOnStartup": 1,
+  "RestoreOnStartup": 5,
   "NewTabPageLocation": "about:blank",
   "SyncDisabled": true,
   "TranslateEnabled": false,
