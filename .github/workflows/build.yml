@@ -61,7 +61,8 @@ jobs:
   smoke:
     name: Image smoke test (incl. Playwright/Chromium CDP check)
     needs: bluebuild
-    if: github.event_name != 'pull_request'
+    # Only builds of main publish :latest, so only they can be smoke-tested here.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
