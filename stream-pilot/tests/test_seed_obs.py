@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 
 from stream_pilot.config import AudioCfg, CameraCfg
-from stream_pilot.seed_obs import reset_scenes, seed_obs
+from stream_pilot.seed_obs import clear_stale_sentinels, reset_scenes, seed_obs
 
 CAMS = {
     "main": CameraCfg(scene="Main Camera", device="/dev/v4l/by-id/usb-Main_Cam-video-index0"),
@@ -242,3 +242,22 @@ def test_reset_scenes_missing_defaults_raises_and_keeps_scenes(tmp_path, default
         reset_scenes(tmp_path / "nope", cfg, NEW_CAMS, NEW_AUDIO, now=NOW)
     assert (cfg / "basic" / "scenes" / "Untitled.json").read_text() == before
     assert not list((cfg / "basic" / "scenes").glob("*.bak-*"))
+
+
+def test_clear_stale_sentinels_removes_run_files(tmp_path):
+    # As left by OBS sessions that never finished an orderly exit (power cut,
+    # forced power-off, or killed while showing the "Crash Detected" dialog).
+    sentinel = tmp_path / "obs-studio" / ".sentinel"
+    sentinel.mkdir(parents=True)
+    for name in ("run_1caf3250-f9c5-49ff-bccb-6947387303ea", "run_768f4135-572b-412d-844a-48343bd4ae37"):
+        (sentinel / name).touch()
+    (sentinel / "keep.txt").write_text("not ours")
+    assert clear_stale_sentinels(tmp_path / "obs-studio") == [
+        "run_1caf3250-f9c5-49ff-bccb-6947387303ea", "run_768f4135-572b-412d-844a-48343bd4ae37"]
+    assert [p.name for p in sentinel.iterdir()] == ["keep.txt"]
+
+
+def test_clear_stale_sentinels_nothing_to_do(tmp_path):
+    assert clear_stale_sentinels(tmp_path / "obs-studio") == []
+    (tmp_path / "obs-studio" / ".sentinel").mkdir(parents=True)
+    assert clear_stale_sentinels(tmp_path / "obs-studio") == []

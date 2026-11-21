@@ -35,6 +35,31 @@ MICROPHONE_PLACEHOLDER = "@MICROPHONE_DEVICE@"
 WEBSOCKET_PORT = 4455
 
 
+def clear_stale_sentinels(config_dir: Path) -> list[str]:
+    """Remove the ``.sentinel/run_*`` files earlier OBS sessions left; return their names.
+
+    Only safe before obs.service starts OBS (its ExecStartPre), when no OBS is
+    running. OBS deletes its sentinel only on an orderly exit, and on start any
+    leftover one makes OBS 32 wait on a modal "OBS Studio Crash Detected" dialog
+    (``--disable-shutdown-check`` does not suppress it), so obs-websocket never
+    starts. An OBS killed in that dialog leaves another sentinel, so after one
+    power cut every later boot would stop there.
+    """
+    removed = []
+    for path in sorted((Path(config_dir) / ".sentinel").glob("run_*")):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            log.warning("cannot remove stale OBS sentinel %s: %s", path, exc)
+            continue
+        removed.append(path.name)
+    if removed:
+        log.info("removed stale OBS crash sentinel: %s", ", ".join(removed))
+    return removed
+
+
 def seed_obs(
     defaults_dir: Path,
     config_dir: Path,

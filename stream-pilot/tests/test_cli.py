@@ -75,6 +75,19 @@ def test_seed_obs_cli_other_errors_exit_0(home, monkeypatch, caplog):
     assert "denied" in caplog.text
 
 
+def test_seed_obs_cli_clears_stale_obs_sentinel_even_if_seeding_fails(home, monkeypatch):
+    sentinel = home / ".config" / "obs-studio" / ".sentinel"
+    sentinel.mkdir(parents=True)
+    (sentinel / "run_71360851-8a67-46d1-b9c5-3a94bb8b41a4").touch()
+
+    def boom(*a, **k):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(cli, "seed_obs", boom)
+    assert main(["seed-obs"]) == 0
+    assert list(sentinel.iterdir()) == []
+
+
 def make_scenes_defaults(root):
     d = root / "defaults"
     (d / "basic" / "scenes").mkdir(parents=True)

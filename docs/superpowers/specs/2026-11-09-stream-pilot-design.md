@@ -143,6 +143,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - The stream key and websocket password are left out.
 - **Stream server and key:** stream-pilot reads both from the Facebook setup page on every boot and applies them with `SetStreamServiceSettings` (`rtmp_custom`). The key never enters the image or the repo.
 - **Seeding is one-time.** Changes the host makes in OBS persist.
+- **No crash prompt:** `obs.service`'s pre-start step also deletes leftover `~/.config/obs-studio/.sentinel/run_*` files. OBS 32 removes its sentinel only on an orderly exit, and a leftover one (power cut, forced power-off) makes the next start wait on a modal "OBS Studio Crash Detected" dialog that `--disable-shutdown-check` does not suppress, so obs-websocket never comes up and every later boot stops there.
 
 ## stream-pilot
 

@@ -19,7 +19,7 @@ from .chromium_prep import clear_singleton_lock, prep_chromium_profile
 from .config import Config, load_config
 from .health import check_health, format_status
 from .power_guard import run_power_guard
-from .seed_obs import reset_scenes, seed_obs
+from .seed_obs import clear_stale_sentinels, reset_scenes, seed_obs
 from .selftest import selftest_cdp
 
 log = logging.getLogger("stream_pilot")
@@ -115,9 +115,13 @@ def cmd_seed_obs(args: argparse.Namespace) -> int:
     With ``--reset-scenes`` (run by hand, OBS stopped) also re-applies the
     camera/microphone IDs from the config to the scene collection.
     """
+    config_dir = Path("~/.config/obs-studio").expanduser()
+    try:
+        clear_stale_sentinels(config_dir)
+    except Exception:
+        log.exception("clearing stale OBS sentinels failed; continuing")
     try:
         cfg = _load_config()
-        config_dir = Path("~/.config/obs-studio").expanduser()
         seed_obs(
             OBS_DEFAULTS_DIR,
             config_dir,
