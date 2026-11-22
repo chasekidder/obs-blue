@@ -132,9 +132,10 @@ in the last bib README revision). Followed:
 - bib adds **no other** commands, so we supply `text --non-interactive`,
   `reboot`, `lang`, `keyboard`, `timezone`, `network`, disk layout, `rootpw`,
   and the user ourselves. Edit `timezone` and the `/etc/localtime` link in
-  `%post` if the PC is not on US Eastern time: for this install type anaconda
-  parses `timezone` but writes no `/etc/localtime`, so without the link the PC
-  runs on UTC.
+  `%post` if the PC is not on US Eastern time (and `lang` plus `/etc/locale.conf`
+  for another language): for this install type anaconda parses `timezone` and
+  `lang` but writes neither file, so without them the PC runs on UTC with the
+  C.UTF-8 locale (24-hour clock).
 - `network --hostname=stream-pc` sets a static hostname. Without it the PC is
   `fedora` early in boot and `stream-pc.lan` once DHCP answers, and Chromium
   refuses a profile whose lock names the other hostname ("in use by another

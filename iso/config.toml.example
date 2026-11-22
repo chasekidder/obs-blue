@@ -84,9 +84,11 @@ chmod 0644 /etc/systemd/system/stream-pilot-tailscale-up.service
 # --- services (sshd and tailscaled are both disabled in the image) ---
 systemctl enable sshd.service tailscaled.service stream-pilot-tailscale-up.service
 
-# --- time zone: for an ostreecontainer install anaconda parses `timezone` but
-# writes no /etc/localtime, which leaves the PC on UTC. ---
+# --- time zone and locale: for an ostreecontainer install anaconda parses
+# `timezone` and `lang` but writes neither /etc/localtime nor /etc/locale.conf,
+# which leaves the PC on UTC and C.UTF-8 (24-hour clock). ---
 ln -sf ../usr/share/zoneinfo/America/Detroit /etc/localtime
+printf 'LANG="en_US.UTF-8"\n' > /etc/locale.conf
 
 # Files written here have no SELinux label yet; best effort.
 restorecon -R /var/home/stream /etc/stream-pilot /etc/systemd/system/stream-pilot-tailscale-up.service || true
