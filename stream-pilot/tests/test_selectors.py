@@ -90,6 +90,28 @@ def test_pick_server_url_is_case_insensitive():
     assert S.pick_server_url(["RTMPS://Edge.XX.FBCDN.NET:443/RTMP"]) is not None
 
 
+def test_pick_server_url_accepts_facebooks_live_api_ingest():
+    # The setup page's Server URL as seen on the stream PC (2026-11-21).
+    assert S.pick_server_url(["rtmps://live-api-s.facebook.com:443/rtmp/"]) == (
+        "rtmps://live-api-s.facebook.com:443/rtmp/"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "rtmps://facebook.com.evil.example/rtmp/",
+        "rtmps://evilfacebook.com:443/rtmp/",
+        "rtmps://live-api-s.facebook.com.evil.example:443/rtmp/",
+        "rtmps://fbcdn.net.evil.example/rtmp/",
+        "rtmps://live-api-s.facebook.com:8443/rtmp/",
+        "rtmps://user@live-api-s.facebook.com/rtmp/",
+    ],
+)
+def test_pick_server_url_rejects_look_alike_hosts(raw):
+    assert S.pick_server_url([raw]) is None
+
+
 # ---- live_id_from_url ------------------------------------------------------
 
 
@@ -170,6 +192,8 @@ def test_comment_id_from_href_none():
     [
         (S.GO_LIVE, "Go Live"),
         (S.GO_LIVE, "  GO LIVE  "),
+        (S.GO_LIVE_START, "Go live"),
+        (S.GO_LIVE_START, "Set up live video"),
         (S.STREAMING_SOFTWARE, "Streaming Software"),
         (S.ADVANCED_SETTINGS, "ADVANCED SETTINGS"),
         (S.PERSISTENT_KEY, "Use a Persistent Stream Key"),
@@ -195,6 +219,10 @@ def test_regexes_match_case_insensitively(rx, text):
     [
         (S.GO_LIVE, "Go live now"),
         (S.GO_LIVE, "Going live"),
+        (S.GO_LIVE, "Set up live video"),  # the final go-live click stays strict
+        (S.GO_LIVE_START, "Create event"),
+        (S.GO_LIVE_START, "Create live video event"),
+        (S.GO_LIVE_START, "Going live"),
         (S.END_LIVE_VIDEO, "End live video when stream stops"),
         (S.INTERSTITIAL_CONFIRM, "Go live later"),
         (S.PREVIEW_LOST_TEXT, "Stream is healthy"),
@@ -215,7 +243,7 @@ def test_selector_constants():
     assert all(
         rx.flags & re.I
         for rx in (
-            S.GO_LIVE, S.STREAMING_SOFTWARE, S.ADVANCED_SETTINGS, S.PERSISTENT_KEY,
+            S.GO_LIVE, S.GO_LIVE_START, S.STREAMING_SOFTWARE, S.ADVANCED_SETTINGS, S.PERSISTENT_KEY,
             S.END_LIVE_WHEN_STREAM_STOPS, S.END_LIVE_VIDEO, S.INTERSTITIAL_CONFIRM,
             S.SERVER_URL_RE, S.COMMENT_LABEL_RE, S.PREVIEW_LOST_TEXT,
         )

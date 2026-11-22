@@ -306,7 +306,7 @@ class Producer:
 
     async def _step_go_live_start(self) -> None:
         btn = await self._find(
-            "go_live_start", (S.ROLE_BUTTON,), S.GO_LIVE, timeout_s=self._timeout_s * 0.4
+            "go_live_start", (S.ROLE_BUTTON,), S.GO_LIVE_START, timeout_s=self._timeout_s * 0.4
         )
         await btn.click(timeout=_ms(self._timeout_s * 0.5))
 
@@ -450,7 +450,7 @@ class Producer:
         button_seen = False
         while True:
             try:
-                btn = await self._locate((S.ROLE_BUTTON,), S.GO_LIVE)
+                btn = await self._go_live_button()
                 button_seen = button_seen or btn is not None
                 if btn is not None and await btn.is_enabled(timeout=1000):
                     if await btn.get_attribute(S.ATTR_ARIA_DISABLED, timeout=1000) != "true":
@@ -478,9 +478,7 @@ class Producer:
     async def _go_live_impl(self, timeout_s: float) -> str:
         deadline = self._now() + timeout_s
         try:
-            btn = await self._find(
-                "go_live", (S.ROLE_BUTTON,), S.GO_LIVE, timeout_s=timeout_s * 0.25
-            )
+            btn = await self._find_go_live_button(timeout_s * 0.25)
             # at most half the budget: the interstitial and the end-live wait need the rest
             await btn.click(timeout=_ms(timeout_s * 0.5))
         except StepFailed:
@@ -518,6 +516,29 @@ class Producer:
             if self._now() >= grace:
                 raise StepFailed("go_live", "end-live control visible but no live id in URL (a live IS running)")
             await asyncio.sleep(_POLL_S)
+
+    async def _go_live_button(self) -> "Locator | None":
+        """The real Go live button (not the step tracker's; see ``S.GO_LIVE_IS_LAST_MATCH``). No waiting."""
+        loc = self._page.get_by_role(S.ROLE_BUTTON, name=S.GO_LIVE).filter(visible=True)  # type: ignore[arg-type]
+        if not await loc.count():
+            return None
+        return loc.last if S.GO_LIVE_IS_LAST_MATCH else loc.first
+
+    async def _find_go_live_button(self, timeout_s: float) -> "Locator":
+        """Poll :meth:`_go_live_button` until it exists; ``StepFailed("go_live")`` at the deadline."""
+        deadline = self._now() + timeout_s
+        last_err = ""
+        while True:
+            try:
+                btn = await self._go_live_button()
+                if btn is not None:
+                    return btn
+            except Exception as exc:  # e.g. mid-navigation; keep polling until the deadline
+                last_err = _short(exc)
+            if self._now() >= deadline:
+                detail = f"not found within {timeout_s:g}s"
+                raise StepFailed("go_live", detail + (f" (last error: {last_err})" if last_err else ""))
+            await asyncio.sleep(0.1)
 
     async def _end_live_visible(self) -> bool:
         return await self._locate((S.ROLE_BUTTON,), S.END_LIVE_VIDEO, text=True) is not None

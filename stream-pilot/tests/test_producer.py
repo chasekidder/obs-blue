@@ -162,6 +162,24 @@ async def test_wait_preview_ready_times_out_then_passes(page, fixture_base_url):
     assert time.monotonic() - started < 4.0
 
 
+async def test_wait_preview_ready_ignores_the_step_tracker_go_live(page, fixture_base_url):
+    # The step tracker's "Go live" is always enabled; only the real button means a preview.
+    producer = await to_setup_page(page, fixture_base_url, "?stepper=1")
+    with pytest.raises(StepFailed) as exc:
+        await producer.wait_preview_ready(0.8)
+    assert exc.value.step == "preview"
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
+
+
+async def test_go_live_clicks_the_real_button_not_the_step_tracker(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url, "?stepper=1")
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
+    assert await producer.go_live(10.0) == LIVE_ID
+    assert await page.evaluate("sessionStorage.getItem('stepperClicked')") is None
+
+
 async def test_preview_lost_reflects_page_text(page, fixture_base_url):
     producer = await to_setup_page(page, fixture_base_url)
     assert await producer.preview_lost() is False

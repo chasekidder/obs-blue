@@ -19,6 +19,16 @@ REACHABILITY_URL = "https://www.facebook.com/"
 # ---- Producer page text (case-insensitive) ---------------------------------
 
 GO_LIVE = re.compile(r"^\s*go live\s*$", re.I)
+# The button that starts setting up a live on the producer homepage. Seen on the
+# stream PC (2026-11-21, "Create live video" page): its "Go live" option's
+# button is "Set up live video". Separate from GO_LIVE so the final go-live
+# click stays strict.
+GO_LIVE_START = re.compile(r"^\s*(go live|set up live video)\s*$", re.I)
+# The producer's step tracker ("1 / 3": Connect video source, Complete post details,
+# Go live) has an always-enabled "Go live" step button before the real Go live
+# button, which stays disabled until Facebook receives the stream. Seen on the
+# stream PC (2026-11-21). The real one is the last "Go live" button on the page.
+GO_LIVE_IS_LAST_MATCH = True
 STREAMING_SOFTWARE = re.compile(r"streaming software", re.I)
 ADVANCED_SETTINGS = re.compile(r"advanced settings", re.I)
 PERSISTENT_KEY = re.compile(r"persistent stream key", re.I)
@@ -41,7 +51,11 @@ COMMENT_ARTICLE_SELECTOR = "[role='article']"
 # ---- Value / URL patterns --------------------------------------------------
 
 STREAM_KEY_RE = re.compile(r"^FB-[A-Za-z0-9_-]{16,}$")
-SERVER_URL_RE = re.compile(r"^rtmps://[a-z0-9.-]+\.fbcdn\.net(:443)?/rtmp/?$", re.I)
+# Only ever send the stream to Facebook. The setup page showed
+# rtmps://live-api-s.facebook.com:443/rtmp/ on the stream PC (2026-11-21).
+SERVER_URL_RE = re.compile(
+    r"^rtmps://([a-z0-9-]+\.)+(fbcdn\.net|facebook\.com)(:443)?/rtmp/?$", re.I
+)
 LIVE_ID_IN_URL_RE = re.compile(r"/live/producer/(?:dashboard/)?(\d{6,})")
 COMMENT_ID_IN_HREF_RE = re.compile(r"[?&]comment_id=(\d+)")
 COMMENT_LABEL_RE = re.compile(
