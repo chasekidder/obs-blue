@@ -78,7 +78,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - a greenboot health check (see Updates)
 - **Updates:**
   - CI builds `:latest` on every push to `main` (no scheduled builds; a manual run picks up base-image updates). A manual workflow promotes a tested `:latest` digest to `:stable`, and the stream PC follows `:stable` only.
-  - Updates are staged in the background and applied on the next boot. Automatic reboots and Flatpak auto-updates are disabled.
+  - Updates are staged in the background and applied on the next boot. The PC is only on for streams (power-on about 15 minutes before going live, off right after), so the update timer checks once, 2 minutes after boot, and the update daemon runs at idle CPU/IO priority with `MemoryHigh=1G`; the base image's 04:00, daily and one-hour-after-boot triggers are cleared. Automatic reboots and Flatpak auto-updates are disabled.
   - **Auto-rollback:** a greenboot health check requires `obs.service`, `chromium.service`, and `stream-pilot.service` to be active, and stream-pilot to have left `STARTING` within 5 minutes of login. If that fails on a newly applied image, greenboot rolls back to the previous deployment and reboots.
 
 ## Session and first run

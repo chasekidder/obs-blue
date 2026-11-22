@@ -30,7 +30,7 @@ CI builds `:latest` on every push to `main` (and on demand: **Actions → bluebu
 
 ## Updates and rollback
 
-- The PC **stages** updates in the background (`rpm-ostreed-automatic`, `AutomaticUpdatePolicy=stage`, daily at 04:00 on unmetered networks) and applies them on the **next boot**. It never reboots by itself, and Flatpak auto-updates are off.
+- The PC **stages** updates in the background (`rpm-ostreed-automatic`, `AutomaticUpdatePolicy=stage`, on unmetered networks) and applies them on the **next boot**. The PC is only on for streams, so it checks once, 2 minutes after power-on, while you set up; the download runs at idle CPU/IO priority with a 1 GB memory cap so it can't disturb OBS. There is no 04:00 or daily check. It never reboots by itself, and Flatpak auto-updates are off.
 - **Automatic rollback (greenboot):** after an update is applied, `greenboot-healthcheck.service` runs `/etc/greenboot/check/required.d/50-stream-pilot.sh`. That check fails unless `stream-pilot` leaves `STARTING` within 5 minutes of the `stream` user's login. A failed boot is retried (`GREENBOOT_MAX_BOOT_ATTEMPTS=3`), then GRUB falls back to the previous deployment and greenboot makes that permanent. greenboot (0.16, the Rust rewrite) reboots on a failed check on **any** boot, including the first boot after install: the first failure sets `boot_counter=3` and reboots. Without a staged update there is nothing to roll back to, so a broken first boot reboots a few times before greenboot asks for manual intervention. To stop that while you debug: `sudo systemctl mask greenboot-healthcheck.service && sudo grub2-editenv - unset boot_counter`, and unmask it afterwards.
 - Check the result with `journalctl -b -u greenboot-healthcheck.service`, or look at the boot status line shown at SSH login.
 - **Manual rollback** over SSH, if something is wrong with a running image: `sudo bootc rollback && sudo systemctl reboot` (as an admin user or root).
@@ -45,7 +45,7 @@ CI builds `:latest` on every push to `main` (and on demand: **Actions → bluebu
    ```
    (or read it from the package page on GitHub).
 2. In the GitHub repo, open **Actions → promote → Run workflow** and paste the digest (`sha256:...`) into the `digest` input.
-3. The workflow copies that exact digest to `:stable` (all architectures) and signs it with the repo's cosign key. The PC picks it up on its next daily update check, stages it, and applies it on the next boot.
+3. The workflow copies that exact digest to `:stable` (all architectures) and signs it with the repo's cosign key. The PC picks it up at its next power-on (the update check 2 minutes after boot), stages it, and applies it on the boot after that.
 
 ## First run on the stream PC
 
