@@ -21,6 +21,7 @@ import contextlib
 import logging
 import time
 from functools import lru_cache
+from itertools import combinations
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
@@ -59,11 +60,26 @@ def _hex_rgb(color: str) -> tuple[int, int, int]:
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
 
 
+def _wrapped(label: str, lines: int) -> str:
+    """Split a one-line label at spaces into ``lines`` lines of balanced length."""
+    words = label.split()
+    best: list[str] | None = None
+    for cuts in combinations(range(1, len(words)), lines - 1):
+        bounds = (0, *cuts, len(words))
+        rows = [" ".join(words[a:b]) for a, b in zip(bounds, bounds[1:])]
+        if best is None or max(map(len, rows)) < max(map(len, best)):
+            best = rows
+    return "\n".join(best or [label])
+
+
 def render_face(
     face: KeyFace, size: tuple[int, int], blink_phase: bool = False
 ) -> Image.Image:
     """Render a key face: solid ``bg`` (black in the blink-off phase) with the
-    multiline label centred in ``fg``, shrunk until it fits 90% of the width."""
+    multiline label centred in ``fg``, shrunk until it fits 90% of the width.
+
+    A one-line label too wide even at the minimum size is wrapped at spaces
+    instead (2-4 balanced lines, largest size that fits)."""
     width, height = size
     black = face.blink and blink_phase
     img = Image.new("RGB", size, (0, 0, 0) if black else _hex_rgb(face.bg))
@@ -71,19 +87,26 @@ def render_face(
         return img
     draw = ImageDraw.Draw(img)
     centre = (width / 2, height / 2)
-    px = max(_MIN_FONT_SIZE, int(height * 0.3))
-    while True:
-        font = _font(px)
+    start = max(_MIN_FONT_SIZE, int(height * 0.3))
+
+    def fits(text: str, px: int) -> bool:
         left, top, right, bottom = draw.multiline_textbbox(
-            centre, face.label, font=font, anchor="mm", align="center"
+            centre, text, font=_font(px), anchor="mm", align="center"
         )
-        if px <= _MIN_FONT_SIZE or (
-            right - left <= _FIT_WIDTH * width and bottom - top <= height
-        ):
-            break
+        return right - left <= _FIT_WIDTH * width and bottom - top <= height
+
+    text, px = face.label, start
+    while px > _MIN_FONT_SIZE and not fits(text, px):
         px -= 1
+    words = face.label.split()
+    if not fits(text, px) and "\n" not in face.label and len(words) > 1:
+        layouts = [_wrapped(face.label, n) for n in range(2, min(len(words), 4) + 1)]
+        text, px = next(
+            ((t, p) for p in range(start, _MIN_FONT_SIZE - 1, -1) for t in layouts if fits(t, p)),
+            (layouts[-1], _MIN_FONT_SIZE),
+        )
     draw.multiline_text(
-        centre, face.label, font=font, fill=_hex_rgb(face.fg), anchor="mm", align="center"
+        centre, text, font=_font(px), fill=_hex_rgb(face.fg), anchor="mm", align="center"
     )
     return img
 

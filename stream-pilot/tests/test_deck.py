@@ -56,7 +56,15 @@ def _text_bbox(img: Image.Image, bg):
 
 @pytest.mark.parametrize(
     "label",
-    ["RECON-\nNECT", "A VERY LONG LABEL INDEED", "GOING\nLIVE", "SETUP", "X"],
+    [
+        "RECON-\nNECT",
+        "A VERY LONG LABEL INDEED",
+        # Too wide on one line at the minimum size in any font: must wrap.
+        "A VERY LONG LABEL INDEED THAT KEEPS ON GOING",
+        "GOING\nLIVE",
+        "SETUP",
+        "X",
+    ],
 )
 def test_render_face_label_fits(label):
     bg = (0x1F, 0x5F, 0xBF)
