@@ -1,13 +1,16 @@
-# stream-pilot window layout. The geometry below assumes a 1920x1080 screen:
-# OBS fills the left 70% (1344x1080), the Facebook comments popout is the right
-# 30% column (576x1080). stream-pilot's config has no override for this.
+# stream-pilot window layout. The geometry below assumes a 1920x1080 screen with
+# the default bottom panel, which leaves a 1920x1034 work area: OBS fills the left
+# 70% (1344x1034), the Facebook comments popout is the right 30% column (576x1034).
+# stream-pilot's config has no override for this.
 #
 # Installed as an XDG default (/etc/xdg/kwinrulesrc); KWin reads kwinrulesrc through
 # KSharedConfig::openConfig, so a user's ~/.config/kwinrulesrc cascades over it.
 # Keys verified against KWin 6.8.2 (rulesettings.kcfg): <key>rule = 2 means "Force",
 # 3 means "Apply initially" (only when the window opens; the user can change it after);
-# wmclassmatch 1 = exact, 2 = substring; types=1 is NET::NormalMask (normal windows
-# only, so OBS dialogs and projectors are left alone); decorationpolicy=none replaces
+# wmclassmatch/titlematch 1 = exact, 2 = substring; types=1 is NET::NormalMask (normal
+# windows). On Wayland OBS's dialogs (Settings, Properties, Confirm Changes) are normal
+# windows too, so the OBS rule also matches the main window's title ("OBS <version>
+# - Profile: ..."); otherwise every dialog is forced to the main window's geometry; decorationpolicy=none replaces
 # the deprecated noborder key; [General] Order replaces the legacy count/rules keys
 # (KWin 6.8 migrates those by rewriting the user's config on first load).
 [General]
@@ -18,10 +21,12 @@ Description=stream-pilot: OBS Studio left column
 wmclass=com.obsproject.Studio
 wmclasscomplete=false
 wmclassmatch=1
+title=- Profile:
+titlematch=2
 types=1
 position=0,0
 positionrule=2
-size=1344,1080
+size=1344,1034
 sizerule=2
 decorationpolicy=none
 decorationpolicyrule=2
@@ -35,7 +40,7 @@ wmclasscomplete=false
 wmclassmatch=2
 position=1344,0
 positionrule=2
-size=576,1080
+size=576,1034
 sizerule=2
 decorationpolicy=none
 decorationpolicyrule=2
