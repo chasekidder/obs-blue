@@ -56,7 +56,9 @@ STREAM_KEY_RE = re.compile(r"^FB-[A-Za-z0-9_-]{16,}$")
 SERVER_URL_RE = re.compile(
     r"^rtmps://([a-z0-9-]+\.)+(fbcdn\.net|facebook\.com)(:443)?/rtmp/?$", re.I
 )
-LIVE_ID_IN_URL_RE = re.compile(r"/live/producer/(?:dashboard/)?(\d{6,})")
+# The 2026 producer puts its pages under /live/producer/v2/<id>/ (seen on the stream PC,
+# 2026-11-21, during setup; that the id is the live video id still needs a real live).
+LIVE_ID_IN_URL_RE = re.compile(r"/live/producer/(?:v2/)?(?:dashboard/)?(\d{6,})")
 COMMENT_ID_IN_HREF_RE = re.compile(r"[?&]comment_id=(\d+)")
 COMMENT_LABEL_RE = re.compile(
     r"^Comment by (?P<author>.+?)(?: (?:\d+ \w+ ago|a minute ago|just now|now))?$", re.I
@@ -93,7 +95,7 @@ def pick_server_url(values: list[str]) -> str | None:
 
 
 def live_id_from_url(url: str) -> str | None:
-    """Live video id from `/live/producer/<id>` or `/live/producer/dashboard/<id>/...` URLs."""
+    """Live video id from `/live/producer/[v2/][dashboard/]<id>/...` URLs."""
     m = LIVE_ID_IN_URL_RE.search(url or "")
     return m.group(1) if m else None
 

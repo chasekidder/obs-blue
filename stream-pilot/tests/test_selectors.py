@@ -124,6 +124,9 @@ def test_pick_server_url_rejects_look_alike_hosts(raw):
         f"https://www.facebook.com/live/producer/dashboard/{LIVE_ID}/COMMENTS",
         f"https://www.facebook.com/live/producer/dashboard/{LIVE_ID}/?tab=1",
         f"/live/producer/dashboard/{LIVE_ID}",
+        # the 2026 producer, as seen on the stream PC (2026-11-21)
+        f"https://www.facebook.com/live/producer/v2/{LIVE_ID}/stream_setup/",
+        f"https://www.facebook.com/live/producer/v2/{LIVE_ID}/dashboard/",
     ],
 )
 def test_live_id_from_url(url):
