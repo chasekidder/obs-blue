@@ -28,7 +28,7 @@ jobs:
     steps:
       # the build is fully handled by the reusable github action
       - name: Build Custom Image
-        uses: blue-build/github-action@v1.11
+        uses: blue-build/github-action@v1.14
         with:
           recipe: ${{ matrix.recipe }}
           cosign_private_key: ${{ secrets.SIGNING_SECRET }}
@@ -44,8 +44,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - name: Run the host unit tests
@@ -67,7 +67,7 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/obs-blue:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Log in to ghcr.io (read-only)
         run: |
           echo "${{ github.token }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
