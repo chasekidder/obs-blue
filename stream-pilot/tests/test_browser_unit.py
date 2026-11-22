@@ -600,6 +600,30 @@ async def test_ssn_helper_errors_are_swallowed(cfg):
     await b._open_ssn_helper()  # no raise
 
 
+# ------------------------------------------- SSN background page refresh
+
+
+async def test_refresh_ssn_background_closes_only_ssn_background_tabs(cfg):
+    b, ctx, fb = make_browser(cfg)
+    fb.targets = [
+        {"type": "page", "url": "https://www.facebook.com/live/producer/", "targetId": "FB"},
+        {"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/background.html?x=1", "targetId": "BG"},
+        {"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/popup.html", "targetId": "MENU"},
+        {"type": "service_worker", "url": f"chrome-extension://{SSN_EXTENSION_ID}/service_worker.js", "targetId": "SW"},
+        {"type": "page", "url": "chrome-extension://otherextension/background.html", "targetId": "OTHER"},
+    ]
+    assert await b.refresh_ssn_background() == 1
+    closes = [c for c in fb.calls if c[0] == "Target.closeTarget"]
+    assert closes == [("Target.closeTarget", {"targetId": "BG"})]
+
+
+async def test_refresh_ssn_background_with_nothing_open_closes_nothing(cfg):
+    b, ctx, fb = make_browser(cfg)
+    fb.targets = [{"type": "page", "url": "about:blank", "targetId": "A"}]
+    assert await b.refresh_ssn_background() == 0
+    assert "Target.closeTarget" not in [m for m, _ in fb.calls]
+
+
 # ----------------------------------------------------- adapter guards
 
 
@@ -664,6 +688,16 @@ class FakeCdp:
 
     async def close_browser(self):
         self.calls.append(("close_browser",))
+
+    async def refresh_ssn_background(self):
+        self.calls.append(("refresh_ssn_background",))
+        return 1
+
+
+async def test_facebook_adapter_refresh_ssn_connects_then_delegates(cfg):
+    cdp = FakeCdp(cfg, connected=False)
+    await FacebookAdapter(cfg, cdp).refresh_ssn()
+    assert cdp.calls == [("connect",), ("refresh_ssn_background",)]
 
 
 async def test_facebook_adapter_methods_surface_a_failed_connect_clearly(cfg):

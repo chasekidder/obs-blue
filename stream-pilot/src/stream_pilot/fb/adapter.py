@@ -76,6 +76,10 @@ class FacebookAdapter:
     async def reachable(self) -> bool:
         return await self._browser.http_reachable(S.REACHABILITY_URL)
 
+    async def refresh_ssn(self) -> None:
+        await self._ensure_connected()
+        await self._browser.refresh_ssn_background()
+
     async def logged_in(self) -> bool:
         producer = await self._producer_for_dashboard()
         await producer.open(self._cfg.facebook.producer_url)

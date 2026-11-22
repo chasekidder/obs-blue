@@ -218,6 +218,7 @@ async def test_happy_path_reaches_ready_in_order(make):
         ("obs.current_scene",),
         ("fb.connect",),
         ("fb.reachable",),
+        ("fb.refresh_ssn",),
         ("fb.logged_in",),
         ("fb.setup_live",),
         ("obs.set_stream_target", rig.fb.target),
@@ -296,6 +297,26 @@ async def test_no_net_waits_for_reachable(make):
 async def test_no_net_not_entered_when_reachable(rig):
     await rig.to_ready()
     assert "NO_NET" not in rig.store.states
+
+
+async def test_ssn_background_refreshed_once_network_is_confirmed(make):
+    # SSN creates its background tab as Chromium starts, which can be before the
+    # network is up; it is only reopened once facebook.com answers.
+    rig = make(fb=FakeFacebook(reachable=[False, False, True]))
+    await rig.c.boot()
+    await rig.settle()
+    names = rig.names(rig.fb)
+    assert names.count("fb.refresh_ssn") == 1
+    last_reachable = len(names) - 1 - names[::-1].index("fb.reachable")
+    assert last_reachable < names.index("fb.refresh_ssn") < names.index("fb.logged_in")
+
+
+async def test_ssn_refresh_failure_does_not_block_setup(make, caplog):
+    rig = make(fb=FakeFacebook(refresh_ssn_raises=[RuntimeError("Target closed")]))
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert "Target closed" in caplog.text
 
 
 async def test_config_missing_goes_to_error_without_touching_facebook(make):
@@ -403,7 +424,7 @@ async def test_retry_from_error_reruns_setup_from_login(make, event):
     await rig.settle()
     assert rig.c.state == State.READY
     names = rig.names(rig.fb)
-    assert names[:2] == ["fb.reachable", "fb.logged_in"]
+    assert names[:3] == ["fb.reachable", "fb.refresh_ssn", "fb.logged_in"]
     assert "fb.setup_live" in names
     assert "obs.connect" not in rig.names(rig.obs)  # already connected
 
@@ -555,6 +576,7 @@ async def test_ready_tick_with_preview_lost_reruns_setup_from_setup(make):
     assert rig.c.state == State.READY
     names = rig.names(rig.fb)
     assert "fb.logged_in" not in names and "fb.reachable" not in names
+    assert "fb.refresh_ssn" not in names  # SSN is only refreshed before LOGIN
     assert "fb.setup_live" in names
     assert "obs.stop_stream" in rig.names(rig.obs)  # stale pre-roll replaced; no live exists
 

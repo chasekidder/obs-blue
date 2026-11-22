@@ -36,6 +36,7 @@ class ObsPort(Protocol):
 class FacebookPort(Protocol):
     async def connect(self) -> None: ...  # attach to Chromium over CDP
     async def reachable(self) -> bool: ...  # https://www.facebook.com answers
+    async def refresh_ssn(self) -> None: ...  # have SSN reopen its background tab now the network is up
     async def logged_in(self) -> bool: ...  # opens producer URL, True if not a login page
     async def setup_live(self) -> StreamTarget: ...  # spec "Facebook setup" steps 1-5 (before OBS start)
     async def wait_preview_ready(self, timeout_s: float) -> None: ...  # raises StepFailed("preview")

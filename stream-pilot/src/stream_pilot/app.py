@@ -63,6 +63,9 @@ class NotWiredFacebook:
     async def reachable(self) -> bool:
         raise _not_wired()
 
+    async def refresh_ssn(self) -> None:
+        return None
+
     async def logged_in(self) -> bool:
         raise _not_wired()
 

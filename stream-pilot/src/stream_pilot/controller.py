@@ -579,11 +579,21 @@ class Controller:
                     if await self._reachable():
                         break
 
+            await self._refresh_ssn()
             await self._login_phase()
 
         if not await self._setup_phase():
             return  # a live is running: leave it (and its state) alone
         self._transition(State.READY)
+
+    async def _refresh_ssn(self) -> None:
+        """Best effort: SSN's background tab may have been created before the network was up."""
+        try:
+            await self.fb.refresh_ssn()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("SSN background refresh failed: %r", exc)
 
     async def _reachable(self) -> bool:
         try:

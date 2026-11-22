@@ -141,6 +141,7 @@ class FakeFacebook(Gated):
         park_raises: Any = None,
         save_failure_raises: Any = None,
         close_raises: Any = None,
+        refresh_ssn_raises: Any = None,
         calls: list | None = None,
     ):
         self._init_gated()
@@ -159,6 +160,7 @@ class FakeFacebook(Gated):
         self._park = Script(park_raises)
         self._save_failure = Script(save_failure_raises)
         self._close = Script(close_raises)
+        self._refresh_ssn = Script(refresh_ssn_raises)
 
     async def connect(self) -> None:
         self.calls.append(("fb.connect",))
@@ -168,6 +170,10 @@ class FakeFacebook(Gated):
         self.calls.append(("fb.reachable",))
         await self._gated("reachable")
         return self._reachable.next()
+
+    async def refresh_ssn(self) -> None:
+        self.calls.append(("fb.refresh_ssn",))
+        self._refresh_ssn.raise_next()
 
     async def logged_in(self) -> bool:
         self.calls.append(("fb.logged_in",))

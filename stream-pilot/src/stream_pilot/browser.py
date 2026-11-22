@@ -43,6 +43,8 @@ log = logging.getLogger(__name__)
 # Social Stream Ninja Chrome extension (id and helper page are SSN knowledge, not Facebook's).
 SSN_EXTENSION_ID = "cppibjhfemifednoimlblfcmjgfhfjeg"
 SSN_FALLBACK_PAGE = "popup.html"
+# The pinned "Keep Open" tab the extension opens (and reopens) itself.
+SSN_BACKGROUND_PAGE = "background.html"
 
 CLOSE_TIMEOUT_S = 10.0  # bound for Browser.close + stopping Playwright
 CONNECT_TIMEOUT_S = 30.0
@@ -429,6 +431,29 @@ class CdpBrowser:
             raise
         except Exception as exc:
             raise BrowserError(f"cannot open the comments window: {type(exc).__name__}: {exc}") from exc
+
+    # ---- SSN background page ------------------------------------------------
+
+    async def refresh_ssn_background(self) -> int:
+        """Close the SSN extension's own background tab(s); SSN reopens a fresh one.
+
+        SSN creates that tab as Chromium starts. If the network is not up yet, the
+        tab never finishes loading, and SSN then fails every recovery attempt and
+        posts "Social Stream background stopped" every minute. Chromium refuses
+        to attach CDP to policy-installed extension pages, so the tab cannot be
+        reloaded; closing it is allowed. Returns how many tabs were closed.
+        """
+        session = await self._browser_session()
+        infos = (await session.send("Target.getTargets")).get("targetInfos", [])
+        want = f"chrome-extension://{SSN_EXTENSION_ID}/{SSN_BACKGROUND_PAGE}"
+        closed = 0
+        for info in infos:
+            if info.get("type") == "page" and re.split(r"[?#]", info.get("url") or "")[0] == want:
+                await session.send("Target.closeTarget", {"targetId": info["targetId"]})
+                closed += 1
+        if closed:
+            log.info("closed %d SSN background tab(s); the extension reopens it", closed)
+        return closed
 
     # ---- SSN helper tab -----------------------------------------------------
 
