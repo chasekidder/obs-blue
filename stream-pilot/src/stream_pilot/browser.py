@@ -45,6 +45,8 @@ SSN_EXTENSION_ID = "cppibjhfemifednoimlblfcmjgfhfjeg"
 SSN_FALLBACK_PAGE = "popup.html"
 # The pinned "Keep Open" tab the extension opens (and reopens) itself.
 SSN_BACKGROUND_PAGE = "background.html"
+# Summary of the desktop notification SSN posts when that tab is stuck.
+SSN_STALLED_SUMMARY = "Social Stream background stopped"
 
 CLOSE_TIMEOUT_S = 10.0  # bound for Browser.close + stopping Playwright
 CONNECT_TIMEOUT_S = 30.0

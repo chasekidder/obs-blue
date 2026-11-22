@@ -28,4 +28,9 @@ class Tick:
     pass
 
 
-Event = DeckPress | PowerPress | ObsStreamState | RetryRequested | Tick
+@dataclass(frozen=True)
+class SsnStalled:
+    """SSN posted that its background page stopped and it could not reopen it."""
+
+
+Event = DeckPress | PowerPress | ObsStreamState | RetryRequested | Tick | SsnStalled

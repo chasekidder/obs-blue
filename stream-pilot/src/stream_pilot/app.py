@@ -33,6 +33,7 @@ from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
 from .power import PowerKeyListener
+from .ssn_watch import SsnStallWatcher
 from .system import SystemCtl, V4l2Camera
 
 log = logging.getLogger(__name__)
@@ -171,6 +172,7 @@ def build_app(
     obs = SimpleObsClient(cfg.obs)
     deck = StreamDeckAdapter(cfg.deck)
     power = PowerKeyListener()
+    ssn_watch = SsnStallWatcher()
     system = SystemCtl()
     camera = V4l2Camera()
     state_dir = cfg.paths.state_dir
@@ -187,13 +189,14 @@ def build_app(
         status=StatusWriter(state_dir / "status.json"),
         dry_run=dry_run,
     )
-    for source in (obs, deck, power):
+    for source in (obs, deck, power, ssn_watch):
         source.set_event_sink(controller.sink)
     guard = MemoryGuard(cfg.memory, deck, controller.note_memory)
 
     background: list[Awaitable] = [
         _supervised("deck", lambda: deck.start()),
         _supervised("power", lambda: power.start()),
+        _supervised("ssn-watch", lambda: ssn_watch.start()),
         _supervised("memory", lambda: guard.run()),
         _supervised("ticker", lambda: _ticker(controller)),
     ]

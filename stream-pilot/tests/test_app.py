@@ -70,6 +70,17 @@ class FakeMemoryGuard:
         pass
 
 
+class FakeSsnWatch:
+    def __init__(self):
+        self.sink = None
+
+    def set_event_sink(self, sink):
+        self.sink = sink
+
+    async def start(self) -> None:
+        pass
+
+
 @pytest.fixture
 def adapters(monkeypatch):
     """Patch every real adapter class on ``stream_pilot.app`` with a fake."""
@@ -87,6 +98,7 @@ def adapters(monkeypatch):
     register("SimpleObsClient", lambda cfg: FakeObs())
     register("StreamDeckAdapter", lambda cfg: FakeDeck())
     register("PowerKeyListener", lambda: FakePower())
+    register("SsnStallWatcher", lambda: FakeSsnWatch())
     register("SystemCtl", lambda: FakeSystem())
     register("V4l2Camera", lambda: FakeCamera())
     register("MemoryGuard", FakeMemoryGuard)
@@ -121,6 +133,7 @@ async def test_build_app_wires_ports_and_sinks(cfg, adapters):
         assert controller.obs.sink == controller.sink
         assert controller.deck.sink == controller.sink
         assert adapters["PowerKeyListener"][0].sink == controller.sink
+        assert adapters["SsnStallWatcher"][0].sink == controller.sink
         # memory guard: cfg.memory, the real deck, samples go to the controller
         (guard,) = FakeMemoryGuard.instances
         assert guard.cfg is cfg.memory
@@ -131,7 +144,7 @@ async def test_build_app_wires_ports_and_sinks(cfg, adapters):
         assert controller.store.path == cfg.paths.state_dir / "state.json"
         assert isinstance(controller.status, StatusWriter)
         assert controller.status.path == cfg.paths.state_dir / "status.json"
-        assert len(coros) == 4
+        assert len(coros) == 5
     finally:
         await close_all(coros)
 
@@ -190,7 +203,7 @@ async def test_build_app_mixes_one_injected_and_one_real_port(cfg, adapters):
         await close_all(coros)
 
 
-async def test_background_coroutines_cover_deck_power_memory_and_ticker(
+async def test_background_coroutines_cover_deck_power_ssn_watch_memory_and_ticker(
     cfg, adapters, monkeypatch
 ):
     ran: list[str] = []
@@ -207,10 +220,17 @@ async def test_background_coroutines_cover_deck_power_memory_and_ticker(
         async def run(self):
             ran.append("memory")
 
+    ssn_obj = FakeSsnWatch()
+
+    async def ssn_start():
+        ran.append("ssn-watch")
+
     deck_obj.start = deck_start
     power_obj.start = power_start
+    ssn_obj.start = ssn_start
     monkeypatch.setattr(app, "StreamDeckAdapter", lambda c: deck_obj)
     monkeypatch.setattr(app, "PowerKeyListener", lambda: power_obj)
+    monkeypatch.setattr(app, "SsnStallWatcher", lambda: ssn_obj)
     monkeypatch.setattr(app, "MemoryGuard", Guard)
 
     controller, coros = app.build_app(cfg, dry_run=False)
@@ -218,8 +238,8 @@ async def test_background_coroutines_cover_deck_power_memory_and_ticker(
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     try:
-        assert sorted(ran) == ["deck", "memory", "power"]
-        # the fourth one is the ticker: still running, never finishes by itself
+        assert sorted(ran) == ["deck", "memory", "power", "ssn-watch"]
+        # the fifth one is the ticker: still running, never finishes by itself
         assert sum(1 for t in tasks if not t.done()) == 1
     finally:
         for t in tasks:
@@ -389,7 +409,7 @@ async def test_build_app_background_awaitables_restart_crashing_adapters(
 
     power.start = start
     controller, coros = app.build_app(cfg, dry_run=False)
-    assert len(coros) == 4
+    assert len(coros) == 5
     tasks = [asyncio.ensure_future(c) for c in coros]
     try:
         await asyncio.wait_for(running.wait(), 2)

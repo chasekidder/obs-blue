@@ -15,6 +15,7 @@ from stream_pilot.events import (
     ObsStreamState,
     PowerPress,
     RetryRequested,
+    SsnStalled,
     Tick,
 )
 from stream_pilot.persist import Saved, StateStore, StatusWriter
@@ -1859,3 +1860,42 @@ async def test_reattach_backoff_resets_on_resume(make, tmp_path):
     await rig.settle()
     assert rig.c.state == State.LIVE
     assert rig.c._reattach_failures == 0 and rig.c._reattach_next_try == 0.0
+
+
+# ---------------------------------------------------------------- SSN self-heal
+
+
+async def test_ssn_stalled_refreshes_ssn_even_while_live(rig):
+    await rig.to_live()
+    rig.clear()
+    await rig.c.handle(SsnStalled())
+    await rig.settle()
+    assert rig.names(rig.fb) == ["fb.refresh_ssn"]
+    assert rig.c.state == State.LIVE
+    assert rig.obs.calls == [] and rig.capture.calls == []
+
+
+async def test_ssn_stalled_refreshes_at_most_once_a_minute(rig):
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_ready()
+    rig.clear()
+    await rig.c.handle(SsnStalled())
+    await rig.settle()
+    clock.t += 59
+    await rig.c.handle(SsnStalled())
+    await rig.settle()
+    assert rig.names(rig.fb).count("fb.refresh_ssn") == 1
+    clock.t += 1
+    await rig.c.handle(SsnStalled())
+    await rig.settle()
+    assert rig.names(rig.fb).count("fb.refresh_ssn") == 2
+
+
+async def test_ssn_stalled_refresh_failure_is_logged_not_fatal(make, caplog):
+    rig = make(fb=FakeFacebook(refresh_ssn_raises=[None, RuntimeError("Target closed")]))
+    await rig.to_ready()  # the boot-time refresh succeeds
+    await rig.c.handle(SsnStalled())
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert "Target closed" in caplog.text

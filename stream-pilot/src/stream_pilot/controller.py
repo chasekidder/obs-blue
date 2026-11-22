@@ -38,6 +38,7 @@ from .events import (
     ObsStreamState,
     PowerPress,
     RetryRequested,
+    SsnStalled,
     Tick,
 )
 from .persist import Saved, StateStore, StatusWriter
@@ -74,6 +75,10 @@ REATTACH_BACKOFF_BASE_S = 15.0
 REATTACH_BACKOFF_MAX_S = 300.0
 # Bound for open_comments / capture.start in the go-live and resume paths.
 CAPTURE_STEP_TIMEOUT_S = 90.0
+# Bound for having SSN reopen its background tab (runs in its own task when self-healing).
+SSN_REFRESH_TIMEOUT_S = 30.0
+# SSN repeats its warning about once a minute while the tab is stuck; one refresh per warning.
+SSN_HEAL_MIN_INTERVAL_S = 60.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -135,6 +140,8 @@ class Controller:
         self._reattach: asyncio.Task | None = None
         self._reattach_failures = 0
         self._reattach_next_try = 0.0
+        self._ssn_heal: asyncio.Task | None = None
+        self._ssn_healed_at: float | None = None
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_camera: str | None = None
@@ -212,6 +219,7 @@ class Controller:
     async def aclose(self) -> None:
         """Cancel background tasks (shutdown / test teardown)."""
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
+        await self._cancel(self._ssn_heal)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
 
@@ -220,7 +228,7 @@ class Controller:
         while True:
             pending = {
                 t
-                for t in (self._flow, self._restart, self._reattach)
+                for t in (self._flow, self._restart, self._reattach, self._ssn_heal)
                 if t is not None and not t.done()
             }
             if not pending:
@@ -248,6 +256,8 @@ class Controller:
             await self._retry()
         elif isinstance(event, Tick):
             await self._on_tick()
+        elif isinstance(event, SsnStalled):
+            self._on_ssn_stalled()
 
     async def _on_deck(self, ev: DeckPress) -> None:
         if ev.key == 0:
@@ -586,10 +596,25 @@ class Controller:
             return  # a live is running: leave it (and its state) alone
         self._transition(State.READY)
 
+    def _on_ssn_stalled(self) -> None:
+        """SSN's comment relay is down: have it reopen its background tab, in any state.
+
+        Only SSN's own tab is touched (not the stream, the comments popout or the
+        DOM capture), so this is safe while LIVE.
+        """
+        if self._ssn_heal is not None and not self._ssn_heal.done():
+            return
+        now = self.clock()
+        if self._ssn_healed_at is not None and now - self._ssn_healed_at < SSN_HEAL_MIN_INTERVAL_S:
+            return
+        self._ssn_healed_at = now
+        log.info("SSN reported its background page stopped; having it reopened")
+        self._ssn_heal = asyncio.get_running_loop().create_task(self._refresh_ssn())
+
     async def _refresh_ssn(self) -> None:
-        """Best effort: SSN's background tab may have been created before the network was up."""
+        """Best effort: SSN's background tab can get stuck; closing it makes SSN reopen it."""
         try:
-            await self.fb.refresh_ssn()
+            await asyncio.wait_for(self.fb.refresh_ssn(), SSN_REFRESH_TIMEOUT_S)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
