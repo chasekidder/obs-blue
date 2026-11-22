@@ -299,6 +299,19 @@ async def test_record_dir_gets_screenshot_and_aria_per_step(page, fixture_base_u
     assert "Persistent stream key" in (rec / "05-persistent_key.yml").read_text()
 
 
+async def test_go_live_records_the_click_and_the_live_dashboard(page, fixture_base_url, tmp_path):
+    rec = tmp_path / "rec"
+    producer = make(page, record_dir=rec)
+    await producer.open(f"{fixture_base_url}/producer_setup.html")
+    await page.get_by_role("button", name="Streaming software").click()
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
+    assert await producer.go_live(10.0) == LIVE_ID
+    assert sorted(p.name for p in rec.iterdir()) == [
+        "01-go_live_clicked.png", "01-go_live_clicked.yml", "02-go_live.png", "02-go_live.yml",
+    ]
+
+
 async def test_unreachable_open_raises_step_failed(page):
     producer = make(page, step_timeout_s=2.0)
     with pytest.raises(StepFailed) as exc:

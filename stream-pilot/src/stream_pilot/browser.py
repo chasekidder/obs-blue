@@ -179,6 +179,7 @@ class CdpBrowser:
         self.poll_s = _POLL_S
         self.fallback_wait_s = _APP_FALLBACK_WAIT_S
         self.helper_wait_s = 2.0  # how long to look for the SSN helper page after creating it
+        self.ssn_reopen_wait_s = 15.0  # how long SSN gets to reopen its background page itself
         self._helper_pages: list["Page"] = []
         self.popout_pages: list["Page"] = []
         self._pw: Any = None
@@ -437,24 +438,40 @@ class CdpBrowser:
     # ---- SSN background page ------------------------------------------------
 
     async def refresh_ssn_background(self) -> int:
-        """Close the SSN extension's own background tab(s); SSN reopens a fresh one.
+        """Replace the SSN extension's own background tab(s) with a fresh one.
 
-        SSN creates that tab as Chromium starts. If the network is not up yet, the
-        tab never finishes loading, and SSN then fails every recovery attempt and
+        That tab can get stuck loading; SSN then fails every recovery attempt and
         posts "Social Stream background stopped" every minute. Chromium refuses
         to attach CDP to policy-installed extension pages, so the tab cannot be
-        reloaded; closing it is allowed. Returns how many tabs were closed.
+        reloaded; closing it is allowed. SSN reopens it only when one of its
+        scripts messages it, which may not happen during a live (the dashboard is
+        parked), so if it has not reopened within ``ssn_reopen_wait_s`` the page
+        is opened here (SSN adopts any open copy of it). Returns how many tabs
+        were closed.
         """
         session = await self._browser_session()
-        infos = (await session.send("Target.getTargets")).get("targetInfos", [])
         want = f"chrome-extension://{SSN_EXTENSION_ID}/{SSN_BACKGROUND_PAGE}"
+
+        async def background_tabs() -> list[dict]:
+            infos = (await session.send("Target.getTargets")).get("targetInfos", [])
+            return [
+                i for i in infos
+                if i.get("type") == "page" and re.split(r"[?#]", i.get("url") or "")[0] == want
+            ]
+
         closed = 0
-        for info in infos:
-            if info.get("type") == "page" and re.split(r"[?#]", info.get("url") or "")[0] == want:
-                await session.send("Target.closeTarget", {"targetId": info["targetId"]})
-                closed += 1
-        if closed:
-            log.info("closed %d SSN background tab(s); the extension reopens it", closed)
+        for info in await background_tabs():
+            await session.send("Target.closeTarget", {"targetId": info["targetId"]})
+            closed += 1
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.ssn_reopen_wait_s
+        while not await background_tabs():
+            if loop.time() >= deadline:
+                await session.send("Target.createTarget", {"url": want, "background": True})
+                log.info("closed %d SSN background tab(s); SSN did not reopen it, so it was opened", closed)
+                return closed
+            await asyncio.sleep(self.poll_s)
+        log.info("closed %d SSN background tab(s); SSN reopened it", closed)
         return closed
 
     # ---- SSN helper tab -----------------------------------------------------

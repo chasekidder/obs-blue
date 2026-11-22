@@ -155,6 +155,7 @@ def make_browser(cfg, pages=None, *, spawn=None) -> tuple[CdpBrowser, FakeContex
     b.poll_s = 0.005
     b.fallback_wait_s = 0.2
     b.helper_wait_s = 0.05
+    b.ssn_reopen_wait_s = 0.05
     b._bind(FakePlaywright(), fb, ctx)
     return b, ctx, fb
 
@@ -603,8 +604,27 @@ async def test_ssn_helper_errors_are_swallowed(cfg):
 # ------------------------------------------- SSN background page refresh
 
 
+def close_removes_target(fb, *, reopen_after_polls=None):
+    """Make the fake browser behave like Chromium (a closed target disappears) and,
+    optionally, like SSN reopening its background page after a few polls."""
+    state = {"polls": 0, "closed": False}
+    bg = f"chrome-extension://{SSN_EXTENSION_ID}/background.html"
+
+    async def hook(method, params):
+        if method == "Target.closeTarget":
+            fb.targets = [t for t in fb.targets if t.get("targetId") != params["targetId"]]
+            state["closed"] = True
+        elif method == "Target.getTargets" and state["closed"] and reopen_after_polls is not None:
+            state["polls"] += 1
+            if state["polls"] == reopen_after_polls:
+                fb.targets.append({"type": "page", "url": bg, "targetId": "BG2"})
+
+    fb.on_send = hook
+
+
 async def test_refresh_ssn_background_closes_only_ssn_background_tabs(cfg):
     b, ctx, fb = make_browser(cfg)
+    close_removes_target(fb, reopen_after_polls=1)
     fb.targets = [
         {"type": "page", "url": "https://www.facebook.com/live/producer/", "targetId": "FB"},
         {"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/background.html?x=1", "targetId": "BG"},
@@ -619,9 +639,30 @@ async def test_refresh_ssn_background_closes_only_ssn_background_tabs(cfg):
 
 async def test_refresh_ssn_background_with_nothing_open_closes_nothing(cfg):
     b, ctx, fb = make_browser(cfg)
+    close_removes_target(fb)
     fb.targets = [{"type": "page", "url": "about:blank", "targetId": "A"}]
     assert await b.refresh_ssn_background() == 0
     assert "Target.closeTarget" not in [m for m, _ in fb.calls]
+
+
+async def test_refresh_ssn_background_lets_ssn_reopen_it(cfg):
+    b, ctx, fb = make_browser(cfg)
+    b.ssn_reopen_wait_s = 2.0
+    close_removes_target(fb, reopen_after_polls=3)
+    fb.targets = [{"type": "page", "url": f"chrome-extension://{SSN_EXTENSION_ID}/background.html", "targetId": "BG"}]
+    assert await b.refresh_ssn_background() == 1
+    assert "Target.createTarget" not in [m for m, _ in fb.calls]
+
+
+async def test_refresh_ssn_background_opens_it_when_ssn_does_not(cfg):
+    # SSN only reopens the page when one of its scripts messages it, which may not
+    # happen during a live (dashboard parked); without this, SSN capture stays down.
+    b, ctx, fb = make_browser(cfg)
+    close_removes_target(fb)
+    want = f"chrome-extension://{SSN_EXTENSION_ID}/background.html"
+    fb.targets = [{"type": "page", "url": want, "targetId": "BG"}]
+    assert await b.refresh_ssn_background() == 1
+    assert ("Target.createTarget", {"url": want, "background": True}) in fb.calls
 
 
 # ----------------------------------------------------- adapter guards
@@ -775,6 +816,21 @@ async def test_facebook_adapter_open_comments_uses_template_and_parks_dashboard(
     assert cdp.opened == [cfg.facebook.comments_url_template.format(live_id=LIVE_ID)]
     await fb.park_dashboard()
     assert cdp.dashboard.gotos == ["about:blank"]
+
+
+async def test_facebook_adapter_records_the_comments_popout_with_record_dir(cfg, monkeypatch):
+    recorded = []
+
+    async def fake_record(page, directory, name):
+        recorded.append((page.url, directory, name))
+
+    monkeypatch.setattr(adapter_mod, "record_page", fake_record)
+    cdp = FakeCdp(cfg)
+    await FacebookAdapter(cfg, cdp, record_dir=Path("/rec")).open_comments(LIVE_ID)
+    assert recorded == [(cfg.facebook.comments_url_template.format(live_id=LIVE_ID), Path("/rec"), "comments_popout")]
+    recorded.clear()
+    await FacebookAdapter(cfg, FakeCdp(cfg)).open_comments(LIVE_ID)
+    assert recorded == []
 
 
 async def test_facebook_adapter_one_producer_per_dashboard_page(cfg, monkeypatch):

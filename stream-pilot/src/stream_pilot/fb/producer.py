@@ -68,6 +68,26 @@ _COLLECT_JS = """([valueSel, textSel, limit]) => {
 }"""
 
 
+async def record_page(page: Any, directory: Path, name: str) -> None:
+    """Best-effort ``<name>.png`` + ``<name>.yml`` (screenshot and aria snapshot) into ``directory``."""
+    try:
+        _private_dir(directory)
+    except OSError as exc:
+        log.warning("record %s: cannot create directory: %s", name, _short(exc))
+        return
+    stem = directory / name
+    try:
+        png = await page.screenshot(timeout=_CAPTURE_TIMEOUT_MS)
+        _write_private(stem.with_suffix(".png"), png)
+    except Exception as exc:
+        log.warning("record %s: screenshot failed: %s", name, _short(exc))
+    try:
+        aria = await page.locator("body").aria_snapshot(timeout=_CAPTURE_TIMEOUT_MS)
+        _write_private(stem.with_suffix(".yml"), aria)
+    except Exception as exc:
+        log.warning("record %s: aria snapshot failed: %s", name, _short(exc))
+
+
 def is_login_flow_url(url: str) -> bool:
     """True if ``url`` is a step of Facebook's login flow (login page, 2FA, checkpoint)."""
     try:
@@ -229,22 +249,7 @@ class Producer:
         if self._record_dir is None:
             return
         self._record_n += 1
-        stem = self._record_dir / f"{self._record_n:02d}-{step}"
-        try:
-            _private_dir(self._record_dir)
-        except OSError as exc:
-            log.warning("record %s: cannot create directory: %s", step, _short(exc))
-            return
-        try:
-            png = await self._page.screenshot(timeout=_CAPTURE_TIMEOUT_MS)
-            _write_private(stem.with_suffix(".png"), png)
-        except Exception as exc:
-            log.warning("record %s: screenshot failed: %s", step, _short(exc))
-        try:
-            aria = await self._page.locator("body").aria_snapshot(timeout=_CAPTURE_TIMEOUT_MS)
-            _write_private(stem.with_suffix(".yml"), aria)
-        except Exception as exc:
-            log.warning("record %s: aria snapshot failed: %s", step, _short(exc))
+        await record_page(self._page, self._record_dir, f"{self._record_n:02d}-{step}")
 
     # ---- simple queries -------------------------------------------------------
 
@@ -486,6 +491,7 @@ class Producer:
         except Exception as exc:
             raise StepFailed("go_live", f"go-live button not clickable: {_short(exc)}") from exc
 
+        await self._record("go_live_clicked")
         state = {"dialog_seen": False, "confirms": 0}
         last_err = ""
         seen: set[str] = set()
@@ -512,6 +518,7 @@ class Producer:
             live_id = S.live_id_from_url(self._page.url)
             if live_id:
                 log.info("go_live: live id %s", live_id)
+                await self._record("go_live")
                 return live_id
             if self._now() >= grace:
                 raise StepFailed("go_live", "end-live control visible but no live id in URL (a live IS running)")

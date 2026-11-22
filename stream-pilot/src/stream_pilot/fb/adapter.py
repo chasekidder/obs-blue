@@ -22,7 +22,7 @@ from stream_pilot.comment_log import CommentLog
 from stream_pilot.config import Config
 from stream_pilot.fb import selectors as S
 from stream_pilot.fb.comments import FbDomCapture
-from stream_pilot.fb.producer import Producer
+from stream_pilot.fb.producer import Producer, record_page
 from stream_pilot.ports import StreamTarget
 from stream_pilot.ssn_listener import SsnListener
 
@@ -103,6 +103,8 @@ class FacebookAdapter:
         await self._ensure_connected()
         url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
         self._comments_page = await self._browser.open_app_window(url)
+        if self._record_dir is not None:
+            await record_page(self._comments_page, self._record_dir, "comments_popout")
 
     async def park_dashboard(self) -> None:
         await self._ensure_connected()
