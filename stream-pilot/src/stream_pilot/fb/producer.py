@@ -31,6 +31,7 @@ import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from stream_pilot.fb import selectors as S
 from stream_pilot.ports import StepFailed, StreamTarget
@@ -65,6 +66,15 @@ _COLLECT_JS = """([valueSel, textSel, limit]) => {
   }
   return out;
 }"""
+
+
+def is_login_flow_url(url: str) -> bool:
+    """True if ``url`` is a step of Facebook's login flow (login page, 2FA, checkpoint)."""
+    try:
+        path = urlparse(url).path
+    except ValueError:
+        return False
+    return path.startswith(S.LOGIN_FLOW_PATH_PREFIXES)
 
 
 def _short(exc: BaseException) -> str:
@@ -251,6 +261,15 @@ class Producer:
             return await self._page.locator(S.LOGIN_FORM_SELECTOR).first.is_visible()
 
         return await self._bounded("login_check", query(), _QUERY_TIMEOUT_S, "login check", wrap=True)
+
+    async def in_login_flow(self) -> bool:
+        """True while Facebook's login form or a later login step (2FA) is on screen.
+
+        Never navigates: the host may be typing into it.
+        """
+        if is_login_flow_url(self._page.url or ""):
+            return True
+        return await self.is_login_page()
 
     async def preview_lost(self) -> bool:
         """True if the preview-lost text is visible. Errors raise ``StepFailed("preview_lost")``."""

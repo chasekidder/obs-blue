@@ -244,6 +244,14 @@ async def test_is_login_page(page, fixture_base_url):
     assert await producer.is_login_page() is False
 
 
+async def test_in_login_flow_while_the_login_form_is_shown(page, fixture_base_url):
+    producer = make(page)
+    await producer.open(f"{fixture_base_url}/login.html")
+    assert await producer.in_login_flow() is True
+    await producer.open(f"{fixture_base_url}/live/producer/")
+    assert await producer.in_login_flow() is False
+
+
 async def test_save_failure_writes_three_files(page, fixture_base_url, tmp_path):
     producer = make(page)
     await producer.open(f"{fixture_base_url}/live/producer/")

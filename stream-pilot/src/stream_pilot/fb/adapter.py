@@ -82,6 +82,8 @@ class FacebookAdapter:
 
     async def logged_in(self) -> bool:
         producer = await self._producer_for_dashboard()
+        if await producer.in_login_flow():
+            return False  # never reload a login or 2FA page: the host may be typing
         await producer.open(self._cfg.facebook.producer_url)
         return not await producer.is_login_page()
 

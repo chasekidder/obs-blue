@@ -727,6 +727,9 @@ async def test_facebook_adapter_reconnects_when_the_browser_is_disconnected(cfg,
         async def open(self, url):
             pass
 
+        async def in_login_flow(self):
+            return False
+
         async def is_login_page(self):
             return False
 
@@ -812,6 +815,9 @@ async def test_facebook_adapter_logged_in_opens_producer_url(cfg, monkeypatch):
         async def open(self, url):
             seen.append(url)
 
+        async def in_login_flow(self):
+            return False
+
         async def is_login_page(self):
             return seen[-1] == "login"
 
@@ -820,6 +826,30 @@ async def test_facebook_adapter_logged_in_opens_producer_url(cfg, monkeypatch):
     fb = FacebookAdapter(cfg, cdp)
     assert await fb.logged_in() is True
     assert seen == [cfg.facebook.producer_url]
+
+
+async def test_facebook_adapter_logged_in_never_reloads_a_login_or_2fa_page(cfg, monkeypatch):
+    # The host may be typing into the form: reloading it every poll made logging in impossible.
+    opened = []
+
+    class P:
+        def __init__(self, page, **kw):
+            pass
+
+        async def open(self, url):
+            opened.append(url)
+
+        async def in_login_flow(self):
+            return True
+
+        async def is_login_page(self):
+            return True
+
+    monkeypatch.setattr(adapter_mod, "Producer", P)
+    fb = FacebookAdapter(cfg, FakeCdp(cfg))
+    assert await fb.logged_in() is False
+    assert await fb.logged_in() is False
+    assert opened == []
 
 
 async def test_facebook_adapter_save_failure_delegates(cfg, monkeypatch, tmp_path):

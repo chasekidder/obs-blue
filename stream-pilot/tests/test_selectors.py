@@ -309,3 +309,23 @@ def test_title_field_matches_title_labels_only():
     assert S.DEFAULT_LIVE_TITLE.strip()
     # required-field selector is a plain CSS selector list, not a regex
     assert "[required]" in S.REQUIRED_FIELD_SELECTOR
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://www.facebook.com/two_step_verification/authentication/?encrypted_context=x", True),
+        ("https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Flive%2Fproducer", True),
+        ("https://www.facebook.com/login.php", True),
+        ("https://www.facebook.com/checkpoint/?next", True),
+        ("https://www.facebook.com/live/producer/?actor=1&entry_point=group&target_id=2", False),
+        ("https://www.facebook.com/groups/2423682404705025", False),
+        ("https://www.facebook.com/", False),
+        ("about:blank", False),
+    ],
+)
+def test_is_login_flow_url(url, expected):
+    from stream_pilot.fb.producer import is_login_flow_url
+
+    assert is_login_flow_url(url) is expected
+

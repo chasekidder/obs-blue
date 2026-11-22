@@ -32,6 +32,10 @@ PREVIEW_LOST_TEXT = re.compile(
 # ---- CSS -------------------------------------------------------------------
 
 LOGIN_FORM_SELECTOR = "input[name='email'], input[name='pass'], form[action*='login']"
+# URL paths of Facebook's login flow beyond the form, where a reload would lose the
+# host's progress. Seen on the stream PC (2026-11-21): the form is shown on
+# /live/producer/ itself, then 2FA at /two_step_verification/authentication/.
+LOGIN_FLOW_PATH_PREFIXES = ("/login", "/two_step_verification/", "/checkpoint/")
 COMMENT_ARTICLE_SELECTOR = "[role='article']"
 
 # ---- Value / URL patterns --------------------------------------------------
