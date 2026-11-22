@@ -1,5 +1,7 @@
 [DoNotDisturb]
-Until=2099-12-31T23:59:59
+# KConfig stores a QDateTime as "year,month,day,hour,minute,second"; an ISO string
+# fails to parse and leaves Do Not Disturb off.
+Until=2099,12,31,23,59,59
 
 [Notifications]
 CriticalInDndMode=false
