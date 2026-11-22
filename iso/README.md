@@ -131,7 +131,10 @@ in the last bib README revision). Followed:
 - bib adds `ostreecontainer ...` itself, so it is **not** in our kickstart.
 - bib adds **no other** commands, so we supply `text --non-interactive`,
   `reboot`, `lang`, `keyboard`, `timezone`, `network`, disk layout, `rootpw`,
-  and the user ourselves. Edit `timezone` if the PC is not on US Eastern time.
+  and the user ourselves. Edit `timezone` and the `/etc/localtime` link in
+  `%post` if the PC is not on US Eastern time: for this install type anaconda
+  parses `timezone` but writes no `/etc/localtime`, so without the link the PC
+  runs on UTC.
 - `network --hostname=stream-pc` sets a static hostname. Without it the PC is
   `fedora` early in boot and `stream-pc.lan` once DHCP answers, and Chromium
   refuses a profile whose lock names the other hostname ("in use by another
