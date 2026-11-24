@@ -123,7 +123,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
 
   | Window | How it is opened | Placement |
   |---|---|---|
-  | Producer dashboard | Main browser window, navigated over CDP | Behind OBS; parked on `about:blank` once live |
+  | Producer dashboard | Main browser window, navigated over CDP | The right column (OBS keeps the rest of the screen, so the host can stage the scene before going live); covered by the comments column and parked on `about:blank` once live |
   | Comments column ("popout") | `chromium --app=<comments url>` against the same profile (hands off to the running browser) | Borderless chat column directly right of the OBS preview, always on top, page zoom set for legibility |
 
   KWin rules match the column by its app-window ID (`chrome-www.facebook.com__live_producer…`), not by title. OBS gets a matching rule for the rest of the screen, so the layout is fixed. The SSN dock is not displayed.
@@ -261,6 +261,7 @@ The host reads comments directly in the visible popout. The captures exist to pr
 2. The dashboard tab is parked once live (no hours of preview decoding).
 3. Zero-copy VAAPI H.264 removes a GPU-to-CPU copy of every frame and most of the CPU load.
 4. zram (Fedora default) plus `vm.swappiness=180` and `vm.page-cluster=0`.
+4a. Plasma's Performance power profile: tuned-ppd maps it to a `stream-pilot` tuned profile (`throughput-performance`, CPU at full speed) that keeps the zram values above. No USB autosuspend for cameras, audio devices and the Stream Deck.
 5. Unit priorities:
    - `obs.service`: `MemoryLow=` protection.
    - `chromium.service`: soft `MemoryHigh=` ceiling and `OOMScoreAdjust=500`.
