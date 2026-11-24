@@ -1,6 +1,7 @@
 {
   "rate_control": "CBR",
-  "bitrate": 6000,
+  "bitrate": 4500,
   "keyint_sec": 2,
-  "profile": 100
+  "profile": 100,
+  "level": 41
 }
