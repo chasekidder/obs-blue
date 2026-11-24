@@ -106,6 +106,9 @@ class FakeObs(Gated):
         self.calls.append(("obs.start_stream",))
         self._start.raise_next()
         self.active = True
+        hook = self.hooks.get("start_stream_done")
+        if hook is not None:
+            hook()
 
     async def stop_stream(self) -> None:
         self.calls.append(("obs.stop_stream",))
@@ -192,6 +195,7 @@ class FakeFacebook(Gated):
 
     async def wait_preview_ready(self, timeout_s: float) -> None:
         self.calls.append(("fb.wait_preview_ready", timeout_s))
+        await self._gated("wait_preview_ready")
         self._preview.raise_next()
 
     async def preview_lost(self) -> bool:

@@ -79,6 +79,10 @@ CAPTURE_STEP_TIMEOUT_S = 90.0
 SSN_REFRESH_TIMEOUT_S = 30.0
 # SSN repeats its warning about once a minute while the tab is stuck; one refresh per warning.
 SSN_HEAL_MIN_INTERVAL_S = 60.0
+# While waiting for Facebook's preview, how often OBS's pre-roll is checked. Facebook
+# can refuse an RTMP connect made right after the previous one with the same
+# persistent key stopped; OBS then just stops, so the pre-roll is restarted.
+PREROLL_CHECK_S = 5.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -680,13 +684,30 @@ class Controller:
                     await self._wait_stream_stopped()
                 await self.obs.set_stream_target(target)
                 await self.obs.start_stream()
-                await self.fb.wait_preview_ready(t.preview_s)
+                await self._wait_preview_keeping_pre_roll(t.preview_s)
                 return True
             except StepFailed as exc:
                 log.warning("setup attempt %d/%d failed: %s", attempt, attempts, exc)
                 if attempt >= attempts:
                     raise
         return True  # unreachable: the loop returns or raises
+
+    async def _wait_preview_keeping_pre_roll(self, timeout_s: float) -> None:
+        preview = asyncio.ensure_future(self.fb.wait_preview_ready(timeout_s))
+        try:
+            while True:
+                done, _ = await asyncio.wait({preview}, timeout=PREROLL_CHECK_S)
+                if done:
+                    return preview.result()
+                if self._setup_blocked_by_live():
+                    return await preview
+                if not await self.obs.stream_active():
+                    log.warning("OBS pre-roll stream stopped before Facebook saw it; restarting it")
+                    await self.obs.start_stream()
+        finally:
+            if not preview.done():
+                preview.cancel()
+                await asyncio.gather(preview, return_exceptions=True)
 
     async def _wait_stream_stopped(self) -> None:
         waited = 0.0

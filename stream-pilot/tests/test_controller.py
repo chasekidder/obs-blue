@@ -411,6 +411,43 @@ async def test_setup_stops_already_active_obs_stream_first(make):
     assert names.index("obs.set_stream_target") < names.index("obs.start_stream")
 
 
+async def test_preview_wait_restarts_a_pre_roll_that_facebook_dropped(make, monkeypatch):
+    monkeypatch.setattr(controller_mod, "PREROLL_CHECK_S", 0.01)
+    rig = make()
+    rig.fb.gates["wait_preview_ready"] = gate = asyncio.Event()
+    starts = []
+
+    def start_fails_to_connect_once():
+        starts.append(1)
+        if len(starts) == 1:
+            rig.obs.active = False  # OBS accepted StartStream, then the RTMP connect failed
+
+    rig.obs.hooks["start_stream_done"] = start_fails_to_connect_once
+    await rig.c.boot()
+    for _ in range(200):
+        if len(starts) >= 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(starts) == 2
+    assert rig.c.state == State.SETUP
+    gate.set()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.obs.active
+
+
+async def test_preview_wait_leaves_a_running_pre_roll_alone(make, monkeypatch):
+    monkeypatch.setattr(controller_mod, "PREROLL_CHECK_S", 0.01)
+    rig = make()
+    rig.fb.gates["wait_preview_ready"] = gate = asyncio.Event()
+    await rig.c.boot()
+    await asyncio.sleep(0.1)
+    gate.set()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.names(rig.obs).count("obs.start_stream") == 1
+
+
 # ---------------------------------------------------------------- retry
 
 
