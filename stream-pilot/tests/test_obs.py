@@ -335,3 +335,90 @@ async def test_sink_exception_is_logged_not_raised(caplog):
     with caplog.at_level(logging.ERROR, logger="stream_pilot.obs"):
         await cb({"outputState": "OBS_WEBSOCKET_OUTPUT_STARTED"})
     assert any("sink" in r.getMessage() for r in caplog.records)
+
+
+# ---- generic requests, connect listeners, extra events -------------------
+
+
+async def test_request_returns_response_data():
+    obs, ws = make()
+    ws.responses["GetSceneList"] = ok({"scenes": []})
+    assert await obs.request("GetSceneList") == {"scenes": []}
+    assert ws.calls == [("GetSceneList", None)]
+
+
+async def test_request_failure_carries_the_status_code():
+    from stream_pilot.obs import ObsRequestFailed
+
+    obs, ws = make()
+    ws.responses["GetSourceFilter"] = fail(600, "No filter")
+    with pytest.raises(ObsRequestFailed) as ei:
+        await obs.request("GetSourceFilter", {"sourceName": "Mic", "filterName": "x"})
+    assert ei.value.code == 600
+    assert ei.value.step == "obs"
+    assert isinstance(ei.value, StepFailed)
+
+
+async def test_connect_listeners_run_on_every_connect_but_not_when_connected():
+    obs, ws = make()
+    seen = []
+    obs.add_connect_listener(lambda: seen.append("up"))
+    await obs.connect()
+    await obs.connect()
+    assert seen == ["up"]
+    ws.identified = False  # OBS restarted
+    await obs.request("GetSceneList")
+    assert seen == ["up", "up"]
+
+
+async def test_failed_connect_does_not_notify():
+    obs, ws = make()
+    seen = []
+    obs.add_connect_listener(lambda: seen.append("up"))
+    ws.connect_errors = [OSError("refused")]
+    with pytest.raises(StepFailed):
+        await obs.connect()
+    assert seen == []
+
+
+async def test_broken_connect_listener_is_logged(caplog):
+    obs, ws = make()
+
+    def boom():
+        raise RuntimeError("listener broke")
+
+    obs.add_connect_listener(boom)
+    await obs.connect()
+    assert "connect listener failed" in caplog.text
+
+
+async def test_on_event_registers_once_per_event_and_dispatches():
+    obs, ws = make()
+    got = []
+
+    async def async_handler(data):
+        got.append(("a", data))
+
+    obs.on_event("CurrentProgramSceneChanged", lambda d: got.append(("s", d)))
+    obs.on_event("CurrentProgramSceneChanged", async_handler)
+    await obs.connect()
+    names = [e for _, e in ws.callbacks]
+    assert names == ["StreamStateChanged", "CurrentProgramSceneChanged"]
+    cb = ws.callbacks[1][0]
+    await cb({"sceneName": "Black"})
+    assert got == [("s", {"sceneName": "Black"}), ("a", {"sceneName": "Black"})]
+
+
+async def test_failing_event_handler_does_not_stop_the_others(caplog):
+    obs, ws = make()
+    got = []
+
+    def boom(_d):
+        raise RuntimeError("x")
+
+    obs.on_event("E", boom)
+    obs.on_event("E", got.append)
+    await obs.connect()
+    await ws.callbacks[1][0]({"k": 1})
+    assert got == [{"k": 1}]
+    assert "E handler failed" in caplog.text

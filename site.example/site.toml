@@ -55,3 +55,11 @@ session_id = ""
 #   pactl list short sources
 # and copy the second column of the input device (not a ".monitor" source).
 #mic_device = "alsa_input.usb-Vendor_Device-00.mono-fallback"
+
+# ---- Optional features ------------------------------------------------------
+# Each feature below has its own section with an `enabled` switch; all of them
+# are off by default, and off means the PC behaves exactly as without it. To
+# turn one on, uncomment its section header and `enabled = true` (plus any
+# option you want to change), then `systemctl --user restart stream-pilot`:
+# switches are only read at startup. `stream-pilot status` lists every feature
+# as on or off. `enabled` must be a bare true/false (not "true" in quotes).

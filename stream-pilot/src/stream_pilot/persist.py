@@ -78,15 +78,17 @@ class StatusWriter:
         last_error: str | None,
         live_id: str | None,
         memory: dict | None,
+        features: dict[str, bool] | None = None,
     ) -> None:
-        _atomic_write_json(
-            self.path,
-            {
-                "state": state,
-                "since": since,
-                "last_error": last_error,
-                "live_id": live_id,
-                "memory": memory,
-                "updated_at": time.time(),
-            },
-        )
+        data = {
+            "state": state,
+            "since": since,
+            "last_error": last_error,
+            "live_id": live_id,
+            "memory": memory,
+            "updated_at": time.time(),
+        }
+        # Optional (readers must not require it): older images ignore it.
+        if features is not None:
+            data["features"] = features
+        _atomic_write_json(self.path, data)

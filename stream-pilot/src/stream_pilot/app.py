@@ -26,8 +26,9 @@ from .browser import CdpBrowser
 from .config import Config
 from .controller import Controller
 from .deck import StreamDeckAdapter
-from .events import DeckPress, RetryRequested, Tick
+from .events import DeckPress, ObsConnected, RetryRequested, Tick
 from .fb.adapter import CaptureAdapter, FacebookAdapter
+from .features import Feature, describe
 from .memory import MemoryGuard
 from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
@@ -147,6 +148,11 @@ async def _supervised(
         backoff = min(backoff * 2, BACKOFF_MAX_S)
 
 
+def build_features(cfg: Config, *, obs: SimpleObsClient, deck, camera) -> list[Feature]:
+    """One object per feature switch; a feature that is off only ever runs ``restore``."""
+    return []
+
+
 def build_app(
     cfg: Config,
     *,
@@ -176,6 +182,7 @@ def build_app(
     system = SystemCtl()
     camera = V4l2Camera()
     state_dir = cfg.paths.state_dir
+    features = build_features(cfg, obs=obs, deck=deck, camera=camera)
 
     controller = Controller(
         cfg,
@@ -188,9 +195,12 @@ def build_app(
         store=StateStore(state_dir / "state.json"),
         status=StatusWriter(state_dir / "status.json"),
         dry_run=dry_run,
+        features=features,
     )
     for source in (obs, deck, power, ssn_watch):
         source.set_event_sink(controller.sink)
+    obs.add_connect_listener(lambda: controller.sink(ObsConnected()))
+    log.info("features: %s", describe(cfg.features()))
     guard = MemoryGuard(cfg.memory, deck, controller.note_memory)
 
     background: list[Awaitable] = [

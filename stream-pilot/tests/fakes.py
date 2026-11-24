@@ -81,6 +81,12 @@ class FakeObs(Gated):
         self._stop = Script(stop_raises)
         self._active = Script(active_raises)
         self._set_scene = Script(set_scene_raises)
+        # Generic requests (``request``) are recorded here, not in ``calls``.
+        self.requests: list[tuple[str, dict | None]] = []
+        self.request_raises: dict[str, Exception] = {}
+        self.connect_listeners: list = []
+        self.event_handlers: dict[str, list] = {}
+        self.model = ObsModel(program=scene)
 
     def set_event_sink(self, sink) -> None:
         self.calls.append(("obs.set_event_sink",))
@@ -127,6 +133,204 @@ class FakeObs(Gated):
         self.calls.append(("obs.current_scene",))
         await self._gated("current_scene")
         return self.scene
+
+    # -- generic requests (backed by self.model) ----------------------------
+
+    def add_connect_listener(self, listener) -> None:
+        self.connect_listeners.append(listener)
+
+    def on_event(self, event: str, handler) -> None:
+        self.event_handlers.setdefault(event, []).append(handler)
+
+    async def emit(self, event: str, data: dict | None = None) -> None:
+        for handler in self.event_handlers.get(event, []):
+            result = handler(data)
+            if asyncio.iscoroutine(result):
+                await result
+
+    async def request(self, request_type: str, data: dict | None = None) -> dict | None:
+        self.requests.append((request_type, data))
+        await self._gated("request")
+        await self._gated(request_type)
+        failing = self.request_raises.get(request_type)
+        if failing is not None:
+            raise failing
+        self.model.program = self.scene
+        out = self.model.handle(request_type, data or {})
+        self.scene = self.model.program
+        return out
+
+class ObsModel:
+    """The bits of an OBS instance the obs-websocket requests in stream-pilot touch.
+
+    Starts like the seeded scene collection: ``Main Camera`` (Microphone + main camera),
+    ``Jewlery Camera`` (Microphone + close-up camera) and ``Black``.
+    """
+
+    def __init__(self, program: str = "Main Camera"):
+        from stream_pilot.obs import ObsRequestFailed
+
+        self._fail = ObsRequestFailed
+        self.inputs: dict[str, dict] = {
+            "Microphone": {"kind": "pulse_input_capture", "settings": {"device_id": "mic"}},
+            "Logitech Camera 1 (Main)": {"kind": "v4l2_input", "settings": {}},
+            "Video Capture Device (V4L2)": {"kind": "v4l2_input", "settings": {}},
+        }
+        # scene -> list of {"id", "source", "enabled", "transform"} (index 0 = bottom)
+        self.scenes: dict[str, list[dict]] = {
+            "Black": [],
+            "Jewlery Camera": [],
+            "Main Camera": [],
+        }
+        self._next_id = 1
+        for scene, sources in (
+            ("Main Camera", ["Microphone", "Logitech Camera 1 (Main)"]),
+            ("Jewlery Camera", ["Microphone", "Video Capture Device (V4L2)"]),
+        ):
+            for s in sources:
+                self._add_item(scene, s, True)
+        # source -> {filter name: {"kind", "settings", "enabled"}}
+        self.filters: dict[str, dict[str, dict]] = {}
+        self.program = program
+        self.preview: str | None = None
+        self.studio_mode = False
+        self.stats = {"activeFps": 30.0, "renderSkippedFrames": 0, "renderTotalFrames": 0,
+                      "outputSkippedFrames": 0, "outputTotalFrames": 0, "cpuUsage": 5.0}
+        self.stream_status = {"outputActive": False, "outputSkippedFrames": 0,
+                              "outputTotalFrames": 0, "outputCongestion": 0.0}
+        self.input_active: dict[str, bool] = {}
+
+    def _add_item(self, scene: str, source: str, enabled: bool) -> int:
+        item_id = self._next_id
+        self._next_id += 1
+        self.scenes[scene].append(
+            {"id": item_id, "source": source, "enabled": enabled, "transform": {}}
+        )
+        return item_id
+
+    def _scene(self, name: str) -> list[dict]:
+        if name not in self.scenes:
+            raise self._fail("scene", 600, f"No source was found by the name of `{name}`.")
+        return self.scenes[name]
+
+    def item(self, scene: str, source: str) -> dict | None:
+        return next((i for i in self.scenes.get(scene, []) if i["source"] == source), None)
+
+    def handle(self, rt: str, d: dict) -> dict | None:
+        if rt == "GetSceneList":
+            return {"scenes": [{"sceneName": n} for n in self.scenes],
+                    "currentProgramSceneName": self.program,
+                    "currentPreviewSceneName": self.preview}
+        if rt == "GetInputList":
+            return {"inputs": [{"inputName": n, "inputKind": i["kind"]}
+                               for n, i in self.inputs.items()]}
+        if rt == "CreateScene":
+            if d["sceneName"] in self.scenes:
+                raise self._fail(rt, 601, "exists")
+            self.scenes[d["sceneName"]] = []
+            return {}
+        if rt == "GetSceneItemId":
+            items = self._scene(d["sceneName"])
+            for i in items:
+                if i["source"] == d["sourceName"]:
+                    return {"sceneItemId": i["id"]}
+            raise self._fail(rt, 600, "No scene items were found")
+        if rt == "GetSceneItemList":
+            return {"sceneItems": [
+                {"sceneItemId": i["id"], "sourceName": i["source"],
+                 "sceneItemEnabled": i["enabled"],
+                 "inputKind": self.inputs.get(i["source"], {}).get("kind")}
+                for i in self._scene(d["sceneName"])]}
+        if rt == "CreateInput":
+            if d["inputName"] in self.inputs or d["inputName"] in self.scenes:
+                raise self._fail(rt, 601, "exists")
+            self._scene(d["sceneName"])
+            self.inputs[d["inputName"]] = {"kind": d["inputKind"],
+                                           "settings": dict(d.get("inputSettings") or {})}
+            return {"sceneItemId": self._add_item(
+                d["sceneName"], d["inputName"], d.get("sceneItemEnabled", True))}
+        if rt == "CreateSceneItem":
+            self._scene(d["sceneName"])
+            if d["sourceName"] not in self.inputs and d["sourceName"] not in self.scenes:
+                raise self._fail(rt, 600, "No source")
+            return {"sceneItemId": self._add_item(
+                d["sceneName"], d["sourceName"], d.get("sceneItemEnabled", True))}
+        if rt in ("SetSceneItemEnabled", "SetSceneItemTransform", "RemoveSceneItem"):
+            items = self._scene(d["sceneName"])
+            item = next((i for i in items if i["id"] == d["sceneItemId"]), None)
+            if item is None:
+                raise self._fail(rt, 600, "No scene item")
+            if rt == "SetSceneItemEnabled":
+                item["enabled"] = d["sceneItemEnabled"]
+            elif rt == "SetSceneItemTransform":
+                item["transform"].update(d["sceneItemTransform"])
+            else:
+                items.remove(item)
+            return {}
+        if rt == "GetInputSettings":
+            if d["inputName"] not in self.inputs:
+                raise self._fail(rt, 600, "No input")
+            i = self.inputs[d["inputName"]]
+            return {"inputKind": i["kind"], "inputSettings": dict(i["settings"])}
+        if rt == "SetInputSettings":
+            if d["inputName"] not in self.inputs:
+                raise self._fail(rt, 600, "No input")
+            self.inputs[d["inputName"]]["settings"].update(d["inputSettings"])
+            return {}
+        if rt == "GetSourceFilter":
+            f = self.filters.get(d["sourceName"], {}).get(d["filterName"])
+            if f is None:
+                raise self._fail(rt, 600, "No filter")
+            return {"filterKind": f["kind"], "filterEnabled": f["enabled"],
+                    "filterSettings": dict(f["settings"])}
+        if rt == "CreateSourceFilter":
+            if d["sourceName"] not in self.inputs and d["sourceName"] not in self.scenes:
+                raise self._fail(rt, 600, "No source")
+            filters = self.filters.setdefault(d["sourceName"], {})
+            if d["filterName"] in filters:
+                raise self._fail(rt, 601, "exists")
+            filters[d["filterName"]] = {"kind": d["filterKind"], "enabled": True,
+                                        "settings": dict(d.get("filterSettings") or {})}
+            return {}
+        if rt == "SetSourceFilterEnabled":
+            f = self.filters.get(d["sourceName"], {}).get(d["filterName"])
+            if f is None:
+                raise self._fail(rt, 600, "No filter")
+            f["enabled"] = d["filterEnabled"]
+            return {}
+        if rt == "GetStudioModeEnabled":
+            return {"studioModeEnabled": self.studio_mode}
+        if rt == "SetStudioModeEnabled":
+            self.studio_mode = d["studioModeEnabled"]
+            self.preview = self.program if self.studio_mode else None
+            return {}
+        if rt == "GetCurrentProgramScene":
+            return {"currentProgramSceneName": self.program, "sceneName": self.program}
+        if rt == "SetCurrentProgramScene":
+            self._scene(d["sceneName"])
+            self.program = d["sceneName"]
+            return {}
+        if rt == "GetCurrentPreviewScene":
+            if not self.studio_mode:
+                raise self._fail(rt, 506, "Studio mode is not active")
+            return {"currentPreviewSceneName": self.preview, "sceneName": self.preview}
+        if rt == "SetCurrentPreviewScene":
+            if not self.studio_mode:
+                raise self._fail(rt, 506, "Studio mode is not active")
+            self._scene(d["sceneName"])
+            self.preview = d["sceneName"]
+            return {}
+        if rt == "GetStats":
+            return dict(self.stats)
+        if rt == "GetStreamStatus":
+            return dict(self.stream_status)
+        if rt == "GetSourceActive":
+            name = d["sourceName"]
+            if name not in self.inputs and name not in self.scenes:
+                raise self._fail(rt, 600, "No source")
+            active = self.input_active.get(name, True)
+            return {"videoActive": active, "videoShowing": active}
+        raise self._fail(rt, 204, f"FakeObs: unknown request {rt}")
 
 
 class FakeFacebook(Gated):
@@ -320,6 +524,7 @@ class FakeCamera(Gated):
 
 
 __all__ = [
+    "ObsModel",
     "FakeCamera",
     "FakeCapture",
     "FakeDeck",

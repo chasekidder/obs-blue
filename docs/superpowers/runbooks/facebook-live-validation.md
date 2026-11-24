@@ -301,7 +301,7 @@ These come from the spec's "Verify on hardware" table. Each row has a check and 
    ```
    stream-pilot status
    ```
-   Expected output has the lines `state:`, `updated:`, `last error:`, `live id:` and `mem available: <n> MB`. `updated` must be recent (a stale value means the controller is not running). The memory floor is `memory.floor_mb = 600`: check that `mem available` stays above it during the stream, and that the spare key never shows `MEM`.
+   Expected output has the lines `state:`, `updated:`, `last error:`, `live id:` and `mem available: <n> MB`, then a `features:` block with one `<name>: on|off` line per optional feature (they match the `enabled` switches in `site.toml`). `updated` must be recent (a stale value means the controller is not running). The memory floor is `memory.floor_mb = 600`: check that `mem available` stays above it during the stream, and that the spare key never shows `MEM`.
 7. The per-minute samples are in the journal:
    ```
    journalctl --user -u stream-pilot --since "1 hour ago" | grep mem_available_mb

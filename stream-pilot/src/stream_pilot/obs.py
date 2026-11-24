@@ -13,9 +13,13 @@ Connection behaviour (the controller relies on this):
   (closed socket, request timeout) the connection is torn down, reconnected
   exactly once, and the request retried once; a second failure raises
   ``StepFailed("obs")``.
-* OBS-level refusals (``not resp.ok()``) raise ``StepFailed("obs")`` too,
-  except the idempotent cases ``StartStream`` while already running (500) and
-  ``StopStream`` while not running (501), which count as success.
+* OBS-level refusals (``not resp.ok()``) raise ``ObsRequestFailed`` (a
+  ``StepFailed("obs")`` carrying the status code), except the idempotent cases
+  ``StartStream`` while already running (500) and ``StopStream`` while not
+  running (501), which count as success.
+* Connect listeners (``add_connect_listener``) are called after every
+  successful identify, including transparent reconnects after an OBS restart.
+  They run after the connection lock is released and must not block.
 
 Secrets (websocket password, stream key) are never logged.
 """
@@ -38,6 +42,8 @@ _STATE_MAP = {
 }
 
 # obs-websocket v5 RequestStatus codes.
+CODE_RESOURCE_NOT_FOUND = 600
+CODE_RESOURCE_ALREADY_EXISTS = 601
 _CODE_OUTPUT_RUNNING = 500
 _CODE_OUTPUT_NOT_RUNNING = 501
 _IDEMPOTENT = {
@@ -48,6 +54,15 @@ _IDEMPOTENT = {
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
 _DEFAULT_REQUEST_TIMEOUT_S = 10.0
 _DISCONNECT_TIMEOUT_S = 2.0
+
+
+class ObsRequestFailed(StepFailed):
+    """OBS answered a request with a failure status (``code`` is obs-websocket's)."""
+
+    def __init__(self, request_type: str, code: int | None, comment: str | None):
+        super().__init__("obs", f"{request_type}: {code} {comment}")
+        self.request_type = request_type
+        self.code = code
 
 
 def map_stream_state(event_data: dict | None) -> ObsStreamState | None:
@@ -90,14 +105,31 @@ class SimpleObsClient:
         self._sink: EventSink | None = None
         self._callback_registered = False
         self._lock = asyncio.Lock()
+        self._connect_listeners: list[Callable[[], None]] = []
+        self._event_handlers: list[tuple[str, Callable[[dict | None], Any]]] = []
+        self._registered_events: set[str] = set()
 
     # -- ObsPort -----------------------------------------------------------
 
     def set_event_sink(self, sink: EventSink) -> None:
         self._sink = sink
 
+    def add_connect_listener(self, listener: Callable[[], None]) -> None:
+        """Call ``listener()`` after every successful (re)connect."""
+        self._connect_listeners.append(listener)
+
+    def on_event(self, event: str, handler: Callable[[dict | None], Any]) -> None:
+        """Call ``handler(eventData)`` for every ``event`` (sync or async handler)."""
+        self._event_handlers.append((event, handler))
+        if self._callback_registered:
+            self._register_event_handlers(self._client)
+
     async def connect(self) -> None:
         await self._ensure_connected()
+
+    async def request(self, request_type: str, data: dict | None = None) -> dict | None:
+        """Any obs-websocket request; raises ``ObsRequestFailed`` / ``StepFailed("obs")``."""
+        return await self._request(request_type, data)
 
     async def stream_active(self) -> bool:
         data = await self._request("GetStreamStatus")
@@ -147,7 +179,34 @@ class SimpleObsClient:
         if not self._callback_registered:
             self._client.register_event_callback(self._on_stream_state, "StreamStateChanged")
             self._callback_registered = True
+        self._register_event_handlers(self._client)
         return self._client
+
+    def _register_event_handlers(self, client: Any) -> None:
+        for event, _ in self._event_handlers:
+            if event in self._registered_events:
+                continue
+            self._registered_events.add(event)
+
+            async def dispatch(event_data: dict | None, _event: str = event) -> None:
+                for name, handler in list(self._event_handlers):
+                    if name != _event:
+                        continue
+                    try:
+                        result = handler(event_data)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception:
+                        log.exception("obs: %s handler failed", _event)
+
+            client.register_event_callback(dispatch, event)
+
+    def _notify_connected(self) -> None:
+        for listener in list(self._connect_listeners):
+            try:
+                listener()
+            except Exception:
+                log.exception("obs: connect listener failed")
 
     def _make_request(self, request_type: str, data: dict | None) -> Any:
         if self._request_factory is not None:
@@ -189,6 +248,7 @@ class SimpleObsClient:
             except Exception as e:
                 await self._disconnect_quietly(client)
                 raise StepFailed("obs", f"connect failed: {type(e).__name__}: {e}") from e
+        self._notify_connected()
 
     async def _dial(self, client: Any) -> None:
         await client.connect()
@@ -240,4 +300,4 @@ class SimpleObsClient:
                 status.comment,
             )
             return resp.responseData
-        raise StepFailed("obs", f"{request_type}: {status.code} {status.comment}")
+        raise ObsRequestFailed(request_type, status.code, status.comment)

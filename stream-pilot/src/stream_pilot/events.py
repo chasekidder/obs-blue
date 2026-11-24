@@ -33,4 +33,11 @@ class SsnStalled:
     """SSN posted that its background page stopped and it could not reopen it."""
 
 
-Event = DeckPress | PowerPress | ObsStreamState | RetryRequested | Tick | SsnStalled
+@dataclass(frozen=True)
+class ObsConnected:
+    """obs-websocket (re)connected and identified (also after an OBS restart)."""
+
+
+Event = (
+    DeckPress | PowerPress | ObsStreamState | RetryRequested | Tick | SsnStalled | ObsConnected
+)

@@ -55,13 +55,20 @@ def format_status(status: dict, now: float | None = None) -> str:
     avail = memory.get("mem_available_mb") if isinstance(memory, dict) else None
     mem_line = f"mem available: {avail} MB" if _is_number(avail) else "mem available: -"
 
-    return "\n".join([
+    lines = [
         state_line,
         updated_line,
         f"last error: {status.get('last_error') or '-'}",
         f"live id: {status.get('live_id') or '-'}",
         mem_line,
-    ])
+    ]
+    features = status.get("features")
+    if isinstance(features, dict):
+        lines.append("features:")
+        lines.extend(
+            f"  {name}: {'on' if on is True else 'off'}" for name, on in features.items()
+        )
+    return "\n".join(lines)
 
 
 def _unhealthy_reason(status_path: Path, now: float) -> str | None:

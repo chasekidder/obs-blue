@@ -28,19 +28,21 @@ import dataclasses
 import logging
 import time
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 from .comment_log import build_report
 from .config import Config
 from .events import (
     DeckPress,
     Event,
+    ObsConnected,
     ObsStreamState,
     PowerPress,
     RetryRequested,
     SsnStalled,
     Tick,
 )
+from .features import Feature, run_hook
 from .persist import Saved, StateStore, StatusWriter
 from .ports import (
     CameraPort,
@@ -117,8 +119,10 @@ class Controller:
         dry_run: bool = False,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        features: Sequence[Feature] = (),
     ):
         self.cfg = cfg
+        self.features = list(features)
         self.obs = obs
         self.fb = fb
         self.capture = capture
@@ -159,6 +163,9 @@ class Controller:
         # branch point; "power": a power-off is in progress (further presses ignored).
         self._end_mode: str | None = None
         self._power_after_end = False
+        self._feature_tasks: set[asyncio.Task] = set()
+        self._obs_sync: asyncio.Task | None = None
+        self._obs_sync_again = False
 
     # ------------------------------------------------------------------ public
 
@@ -190,6 +197,7 @@ class Controller:
         self._show_camera_faces()
         self._show(3, _FACE_RETRY)
         self._show(4, _FACE_SPARE)
+        self._spawn_feature_task(self._restore_disabled_features())
 
         saved = None
         try:
@@ -231,13 +239,16 @@ class Controller:
         await self._cancel(self._ssn_heal)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
+        for task in list(self._feature_tasks):
+            await self._cancel_bounded(task, REATTACH_CANCEL_WAIT_S)
 
     async def wait_idle(self) -> None:
         """Test helper: wait for the flow task and the restart loop to finish."""
         while True:
             pending = {
                 t
-                for t in (self._flow, self._restart, self._reattach, self._ssn_heal)
+                for t in (self._flow, self._restart, self._reattach, self._ssn_heal,
+                          *self._feature_tasks)
                 if t is not None and not t.done()
             }
             if not pending:
@@ -267,6 +278,57 @@ class Controller:
             await self._on_tick()
         elif isinstance(event, SsnStalled):
             self._on_ssn_stalled()
+        elif isinstance(event, ObsConnected):
+            self._on_obs_connected()
+
+    # ---------------------------------------------------------------- features
+
+    def _spawn_feature_task(self, aw: Awaitable[None]) -> None:
+        """Run feature work in the background (never inline in handle() or a flow)."""
+        task = asyncio.get_running_loop().create_task(aw)
+        self._feature_tasks.add(task)
+        task.add_done_callback(self._feature_tasks.discard)
+
+    async def _restore_disabled_features(self) -> None:
+        for f in self.features:
+            if not f.enabled:
+                await run_hook(f, "restore", f.restore)
+
+    def _on_obs_connected(self) -> None:
+        """Apply every feature's OBS items; one sync at a time, re-run if OBS reconnects meanwhile."""
+        if self._obs_sync is not None and not self._obs_sync.done():
+            self._obs_sync_again = True
+            return
+        self._obs_sync = asyncio.get_running_loop().create_task(self._sync_features_with_obs())
+        self._feature_tasks.add(self._obs_sync)
+        self._obs_sync.add_done_callback(self._feature_tasks.discard)
+
+    async def _sync_features_with_obs(self) -> None:
+        while True:
+            self._obs_sync_again = False
+            for f in self.features:
+                if f.enabled:
+                    await run_hook(f, "obs_connected", f.obs_connected)
+                else:
+                    await run_hook(f, "restore", f.restore)
+            if not self._obs_sync_again:
+                return
+
+    async def _feature_hook(
+        self, hook: str, *args: object, timeout: float | None = None
+    ) -> None:
+        """Call ``hook(*args)`` on every enabled feature that has it, best effort.
+
+        ``timeout`` bounds each call (default: features.HOOK_TIMEOUT_S).
+        """
+        for f in self.features:
+            fn = getattr(f, hook, None)
+            if not f.enabled or fn is None:
+                continue
+            if timeout is None:
+                await run_hook(f, hook, lambda: fn(*args))
+            else:
+                await run_hook(f, hook, lambda: fn(*args), timeout=timeout)
 
     async def _on_deck(self, ev: DeckPress) -> None:
         if ev.key == 0:
@@ -490,6 +552,7 @@ class Controller:
                 last_error=self.last_error,
                 live_id=self.live_id,
                 memory=self._memory,
+                features=self.cfg.features(),
             )
         except Exception:
             log.exception("cannot write status")

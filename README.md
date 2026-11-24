@@ -71,9 +71,13 @@ Do this once, after the first boot from the ISO. After that, boots need no inter
 
 For the full test-Group walkthrough (screenshot recording, a complete test live, ending, the comment report, and the hardware checks), see the [Facebook live validation runbook](docs/superpowers/runbooks/facebook-live-validation.md).
 
+### Optional features
+
+Extra features each have their own section in `~/.config/stream-pilot/site.toml` with an `enabled` switch. They all ship **off**, and off means the PC behaves exactly as without the feature. `site.example/site.toml` lists every switch with its options, commented out. To turn one on, copy its section into `site.toml`, set `enabled = true`, and restart the controller (`systemctl --user restart stream-pilot`); switches are only read at startup. `stream-pilot status` lists each feature as `on` or `off`.
+
 Useful afterwards:
 
-- `stream-pilot status` shows the current state.
+- `stream-pilot status` shows the current state and which optional features are on.
 - `stream-pilot press` presses the status key over SSH (goes live when it shows `GO LIVE`); `stream-pilot press --long` ends a live without powering off.
 - `journalctl --user -u stream-pilot -f` follows the live log.
 - If an update misbehaves and greenboot did not catch it, roll back over SSH with `sudo bootc rollback && sudo systemctl reboot` (as an admin user or root).

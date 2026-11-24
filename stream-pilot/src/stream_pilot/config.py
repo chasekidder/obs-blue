@@ -104,6 +104,11 @@ class PathsCfg:
     failures_dir: Path
 
 
+# Config sections that are feature switches: each has a boolean ``enabled``
+# (shipped off, except ssn) and is listed by `stream-pilot status`.
+FEATURE_SECTIONS: tuple[str, ...] = ("ssn",)
+
+
 @dataclass(frozen=True)
 class Config:
     facebook: FacebookCfg
@@ -116,6 +121,10 @@ class Config:
     deck: DeckCfg
     timeouts: TimeoutsCfg
     paths: PathsCfg
+
+    def features(self) -> dict[str, bool]:
+        """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
+        return {name: bool(getattr(self, name).enabled) for name in FEATURE_SECTIONS}
 
     def missing_site_values(self) -> list[str]:
         """Names of required site values that are empty (whitespace counts)."""
@@ -171,6 +180,10 @@ def _build(cls: type, where: str, data: Any, defaults: Any) -> Any:
     kwargs: dict[str, Any] = {}
     for name in known:
         val = data.get(name, defaults[name])
+        if name == "enabled" and not isinstance(val, bool):
+            log.warning("config %s.enabled must be true or false, not %r; using %s",
+                        where, val, str(defaults[name]).lower())
+            val = defaults[name]
         kwargs[name] = _coerce(name, val)
     return cls(**kwargs)
 

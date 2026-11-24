@@ -64,6 +64,18 @@ echo "OBS encoder plugins in /usr/lib64/obs-plugins:"
 ls /usr/lib64/obs-plugins | grep -E "obs-ffmpeg|obs-qsv"
 '
 
+group "recording and upload tools: ffmpeg with libopus, PulseAudio input and segments; rsync; ssh" '
+command -v ffmpeg rsync ssh ssh-keygen
+encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null)   # here-strings below: SIGPIPE + pipefail
+grep -qE "^ A[A-Z.]+ libopus " <<< "$encoders"
+formats=$(ffmpeg -hide_banner -formats 2>/dev/null)
+grep -qE "^ D[E ]?d? +pulse " <<< "$formats"
+grep -qE "^  E +segment " <<< "$formats"
+grep -qE "^  E +opus " <<< "$formats"
+rsync --version > /dev/null
+echo "ffmpeg (libopus, pulse, segment), rsync and ssh present"
+'
+
 group "Chromium managed policy" '
 policy=/etc/chromium/policies/managed/stream-pilot.json
 test -f "$policy"
