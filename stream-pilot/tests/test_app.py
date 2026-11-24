@@ -465,7 +465,7 @@ async def test_not_wired_capture():
 def restore_signals():
     saved = {
         s: signal.getsignal(s)
-        for s in (signal.SIGUSR1, signal.SIGUSR2, signal.SIGTERM, signal.SIGINT)
+        for s in (signal.SIGUSR1, signal.SIGUSR2, signal.SIGRTMIN, signal.SIGTERM, signal.SIGINT)
     }
     yield
     for s, h in saved.items():
@@ -556,6 +556,18 @@ async def test_run_app_sigusr2_enqueues_a_status_key_press(cfg, monkeypatch, res
                 break
             await asyncio.sleep(0.01)
         assert controller.events == [DeckPress(0)]
+
+
+async def test_run_app_sigrtmin_enqueues_a_status_key_long_press(cfg, monkeypatch, restore_signals):
+    controller = FakeController()
+    patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller):
+        os.kill(os.getpid(), signal.SIGRTMIN)
+        for _ in range(200):
+            if controller.events:
+                break
+            await asyncio.sleep(0.01)
+        assert controller.events == [DeckPress(0, long=True)]
 
 
 async def test_run_app_passes_record_dir_to_build_app(cfg, monkeypatch, restore_signals, tmp_path):

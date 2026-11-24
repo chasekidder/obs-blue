@@ -245,6 +245,8 @@ async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) ->
         installed.append(signal.SIGUSR1)
         loop.add_signal_handler(signal.SIGUSR2, lambda: controller.sink(DeckPress(0)))
         installed.append(signal.SIGUSR2)
+        loop.add_signal_handler(signal.SIGRTMIN, lambda: controller.sink(DeckPress(0, long=True)))
+        installed.append(signal.SIGRTMIN)
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, on_stop_signal, sig.name)
             installed.append(sig)

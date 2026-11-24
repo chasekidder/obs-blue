@@ -273,6 +273,14 @@ def test_press_cli_sends_sigusr2_via_injected_runner(home, monkeypatch):
                       "stream-pilot.service"]]
 
 
+def test_press_long_cli_sends_sigrtmin(home, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_run_command", lambda argv: calls.append(argv) or 0)
+    assert main(["press", "--long"]) == 0
+    assert calls == [["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGRTMIN",
+                      "stream-pilot.service"]]
+
+
 def test_press_cli_missing_systemctl_exits_1(home, monkeypatch, capsys):
     def boom(argv):
         raise FileNotFoundError("systemctl")

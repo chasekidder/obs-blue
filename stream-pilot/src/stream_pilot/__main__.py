@@ -98,10 +98,11 @@ def cmd_retry(_args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_press(_args: argparse.Namespace) -> int:
+def cmd_press(args: argparse.Namespace) -> int:
+    sig = "SIGRTMIN" if args.long else "SIGUSR2"
     try:
         return _run_command(
-            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGUSR2",
+            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", sig,
              "stream-pilot.service"]
         )
     except OSError as exc:
@@ -199,7 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retry": (cmd_retry, "ask the running controller to retry"),
         "press": (
             cmd_press,
-            "short-press the status key (goes live when the key shows GO LIVE)",
+            "press the status key: GO LIVE when green; --long ends a live without powering off",
         ),
         "health": (cmd_health, "wait for the system to be healthy"),
         "seed-obs": (cmd_seed_obs, "seed the OBS configuration"),
@@ -230,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="save a screenshot and aria snapshot of every Facebook step into DIR "
         "(for selector tuning; may contain the stream key, so DIR is made private)",
+    )
+    parsers["press"].add_argument(
+        "--long",
+        action="store_true",
+        help="a long press (3 s hold): while live, ends the live and returns to setup",
     )
     parsers["seed-obs"].add_argument(
         "--reset-scenes",
