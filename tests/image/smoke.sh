@@ -104,6 +104,12 @@ if echo "$out" | grep -iE "Failed to (parse|initialize)" | grep -vi "manager"; t
   echo "unit syntax problem" >&2
   exit 1
 fi
+rec=$units/stream-pilot-recorder@.service
+test -f "$rec"
+grep -qx "ExecStart=/usr/bin/stream-pilot record %f" "$rec"
+grep -qx "KillSignal=SIGINT" "$rec"
+grep -qx "KillMode=mixed" "$rec"
+stream-pilot record --help > /dev/null
 test -f /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
 grep -q "ManagedOOMMemoryPressure=auto" /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
 '

@@ -66,6 +66,16 @@ INLINE_TIMEOUT_S = 5.0
 # Upper bound for each adapter call in the end flow / power-off flow: a hung
 # adapter must never keep system.poweroff() from running.
 END_STEP_TIMEOUT_S = 15.0
+# The whole end flow (power press or long-press to power-off) must finish inside
+# the power guard's window: it powers off 15 s after a press unless status.json
+# says ENDING, then allows 90 s more. Steps after the stream stopped get what is
+# left of this budget; closing Chromium and stopping OBS always get at least
+# END_TAIL_MIN_S each.
+END_FLOW_BUDGET_S = 70.0
+END_TAIL_RESERVE_S = 10.0
+END_TAIL_MIN_S = 2.0
+# Caps for feature work in the end flow (within the budget above).
+END_HOOK_TIMEOUT_S = 12.0
 # Upper bound for one capture re-attach (it may reconnect Chromium and reopen the
 # comments popout); it runs in its own task, so it never blocks handle().
 REATTACH_TIMEOUT_S = 90.0
@@ -166,6 +176,8 @@ class Controller:
         self._feature_tasks: set[asyncio.Task] = set()
         self._obs_sync: asyncio.Task | None = None
         self._obs_sync_again = False
+        self._go_live_pressed_at: float | None = None
+        self._end_deadline: float | None = None  # clock() by which the end flow must be done
 
     # ------------------------------------------------------------------ public
 
@@ -221,6 +233,7 @@ class Controller:
             await self._start_flow(self._resume_flow)
             return
 
+        self._spawn_feature_task(self._feature_hook("not_live"))
         self._transition(State.STARTING)
         await self._start_flow(lambda: self._setup_flow("STARTING"))
 
@@ -357,6 +370,7 @@ class Controller:
         if self.dry_run:
             log.info("dry-run: would go live")
             return
+        self._go_live_pressed_at = time.time()
         await self._start_flow(self._go_live_flow, enter=State.GOING_LIVE)
 
     async def _on_power(self) -> None:
@@ -857,9 +871,11 @@ class Controller:
             await self._cancel(self._restart)
             self.live_id = None
             self.stream_dir = None
+            self._spawn_feature_task(self._feature_hook("not_live"))
             await self._setup_flow("STARTING")
             return
         self._mkdir(self.stream_dir)
+        await self._feature_hook("live_resumed", live_id, self.stream_dir)
         await self._best_effort(
             "resume: capture.start",
             self.capture.start(live_id, self.stream_dir),
@@ -892,6 +908,7 @@ class Controller:
         # during the steps below runs the normal live end flow (cancelling this flow).
         self._transition(State.LIVE)
         # Best effort: nothing below may turn into ERROR.
+        await self._feature_hook("live_confirmed", live_id, stream_dir, self._go_live_pressed_at)
         await self._best_effort(
             "open_comments", self.fb.open_comments(live_id), CAPTURE_STEP_TIMEOUT_S
         )
@@ -916,9 +933,35 @@ class Controller:
         except Exception:
             log.exception("%s failed (continuing)", name)
 
-    async def _bounded_step(self, name: str, aw: Awaitable[object]) -> None:
-        """Best-effort end-flow step, at most END_STEP_TIMEOUT_S (read at call time)."""
-        await self._best_effort(name, aw, END_STEP_TIMEOUT_S)
+    async def _bounded_step(
+        self, name: str, aw: Awaitable[object], *, reserve: float | None = None,
+        cap: float | None = None, floor: float = 0.0,
+    ) -> None:
+        """Best-effort end-flow step, at most END_STEP_TIMEOUT_S (read at call time) and
+        at most what is left of the end-flow budget after ``reserve`` (default
+        END_TAIL_RESERVE_S), but never less than ``floor``; skipped when nothing is left."""
+        cap = END_STEP_TIMEOUT_S if cap is None else cap
+        timeout = max(self._end_budget(cap, reserve), min(floor, cap))
+        if timeout <= 0:
+            if asyncio.iscoroutine(aw):
+                aw.close()
+            log.warning("%s skipped: the end flow's time budget is used up", name)
+            return
+        await self._best_effort(name, aw, timeout)
+
+    def _end_budget(self, cap: float, reserve: float | None = None) -> float:
+        if self._end_deadline is None:
+            return cap
+        reserve = END_TAIL_RESERVE_S if reserve is None else reserve
+        return min(cap, self._end_deadline - self.clock() - reserve)
+
+    async def _end_hook(self, hook: str, *args: object, cap: float = END_HOOK_TIMEOUT_S) -> None:
+        """A feature hook in the end flow, bounded by what is left of the budget."""
+        timeout = self._end_budget(cap)
+        if timeout <= 0:
+            log.warning("feature hook %s skipped: the end flow's time budget is used up", hook)
+            return
+        await self._feature_hook(hook, *args, timeout=timeout)
 
     # -------------------------------------------------------- OBS restart loop
 
@@ -953,13 +996,21 @@ class Controller:
     # ------------------------------------------------------------------- end
 
     async def _end_flow(self, *, power_off: bool) -> None:
+        self._end_deadline = self.clock() + END_FLOW_BUDGET_S
+        stream_dir = self.stream_dir
         self._reset_reattach_backoff()
-        await self._bounded_step("stop_stream", self.obs.stop_stream())
+        # Stopping the stream is never cut short by the budget: it ends the live.
+        await self._best_effort("stop_stream", self.obs.stop_stream(), END_STEP_TIMEOUT_S)
         await self._wait_stream_stopped()
+        ended_at = time.time()
 
         await self._sleep(self.cfg.timeouts.fb_end_wait_s)
+        if stream_dir is not None:
+            await self._end_hook("stream_stopped", stream_dir, ended_at)
         await self._bounded_step("capture.stop", self.capture.stop())
         self._write_report()
+        if stream_dir is not None:
+            await self._end_hook("stream_closed", stream_dir)
 
         # Branch point (synchronous with the flag check, so a PowerPress either
         # sets the flag before it or is handled as a plain shutdown after it).
@@ -968,6 +1019,7 @@ class Controller:
             await self._power_steps()
             return
         self._end_mode = None
+        self._end_deadline = None
         self.live_id = None
         self.stream_dir = None
         await self._setup_flow("LOGIN")
@@ -986,12 +1038,17 @@ class Controller:
 
     async def _shutdown_flow(self) -> None:
         self._end_mode = "power"
+        self._end_deadline = self.clock() + END_FLOW_BUDGET_S
         await self._power_steps()
 
     async def _power_steps(self) -> None:
-        await self._bounded_step("close_browser", self.fb.close_browser())
         await self._bounded_step(
-            "stop obs.service", self.system.stop_user_unit("obs.service")
+            "close_browser", self.fb.close_browser(),
+            reserve=END_TAIL_RESERVE_S / 2, floor=END_TAIL_MIN_S,
+        )
+        await self._bounded_step(
+            "stop obs.service", self.system.stop_user_unit("obs.service"),
+            reserve=0.0, floor=END_TAIL_MIN_S,
         )
         await self._best_effort("poweroff", self.system.poweroff())
 

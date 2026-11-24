@@ -72,6 +72,15 @@ class AudioCfg:
 
 
 @dataclass(frozen=True)
+class RecordingCfg:
+    enabled: bool
+    bitrate_kbps: int
+    clip_s: int
+    fb_delay_s: float
+    replay_includes_preroll: bool
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -106,7 +115,7 @@ class PathsCfg:
 
 # Config sections that are feature switches: each has a boolean ``enabled``
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
-FEATURE_SECTIONS: tuple[str, ...] = ("ssn",)
+FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording")
 
 
 @dataclass(frozen=True)
@@ -121,6 +130,7 @@ class Config:
     deck: DeckCfg
     timeouts: TimeoutsCfg
     paths: PathsCfg
+    recording: RecordingCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -215,6 +225,7 @@ def load_config(paths: list[Path]) -> Config:
         "deck": DeckCfg,
         "timeouts": TimeoutsCfg,
         "paths": PathsCfg,
+        "recording": RecordingCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":

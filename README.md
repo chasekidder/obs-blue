@@ -75,6 +75,8 @@ For the full test-Group walkthrough (screenshot recording, a complete test live,
 
 Extra features each have their own section in `~/.config/stream-pilot/site.toml` with an `enabled` switch. They all ship **off**, and off means the PC behaves exactly as without the feature. `site.example/site.toml` lists every switch with its options, commented out. To turn one on, copy its section into `site.toml`, set `enabled = true`, and restart the controller (`systemctl --user restart stream-pilot`); switches are only read at startup. `stream-pilot status` lists each feature as `on` or `off`.
 
+- [ ] **Recording (`[recording]`, optional):** records the microphone while live into `~/streams/<stream>/audio/` (30 s Ogg Opus clips listed in `audio/manifest.jsonl`) and writes `stream.json` and, last, `DONE` into the stream folder. Before turning it on, check that `[audio] mic_device` is the microphone (`pactl list short sources`); during a test live, `systemctl --user list-units 'stream-pilot-recorder@*'` shows the recorder running.
+
 Useful afterwards:
 
 - `stream-pilot status` shows the current state and which optional features are on.

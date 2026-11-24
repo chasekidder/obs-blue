@@ -181,6 +181,18 @@ def cmd_display_mirror(_args: argparse.Namespace) -> int:
     return run_display_mirror()
 
 
+def cmd_record(args: argparse.Namespace) -> int:
+    """stream-pilot-recorder@.service (user): record the microphone into <stream_dir>/audio/."""
+    from .recorder import run_recorder
+
+    try:
+        cfg = _load_config()
+    except Exception:
+        log.exception("record: cannot load config")
+        return 1
+    return run_recorder(Path(args.stream_dir), cfg.audio, cfg.recording)
+
+
 def cmd_selftest_cdp(args: argparse.Namespace) -> int:
     """CI check: pinned Playwright must still attach to the image's Chromium."""
     chromium_bin = args.chromium_bin
@@ -223,6 +235,11 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_selftest_cdp,
             "check that Playwright can attach to the system Chromium over CDP",
         ),
+        "record": (
+            cmd_record,
+            "record the microphone into STREAM_DIR/audio/ until SIGINT (run by "
+            "stream-pilot-recorder@.service)",
+        ),
     }
     parsers = {}
     for name, (func, help_text) in handlers.items():
@@ -259,6 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Chromium executable (default: cdp.chromium_bin from the config)",
     )
+    parsers["record"].add_argument("stream_dir", metavar="STREAM_DIR")
     parsers["power-guard"].add_argument(
         "--user",
         default="stream",

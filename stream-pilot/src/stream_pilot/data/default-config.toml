@@ -55,3 +55,17 @@ reconnect_retry_s = 5
 state_dir = "~/.local/state/stream-pilot"
 streams_dir = "~/streams"
 failures_dir = "~/.local/state/stream-pilot/failures"
+
+# ---- Optional features (all off by default; see site.example/site.toml) ----
+
+[recording]
+# Records [audio] mic_device into <stream folder>/audio/ while live, and writes
+# stream.json and DONE into the stream folder.
+enabled = false
+bitrate_kbps = 32
+clip_s = 30
+# Estimated delay between the room and what Facebook's viewers see.
+fb_delay_s = 15
+# Whether Facebook's replay of a live starts with the pre-roll before Go live
+# (measured on the stream PC; see docs/superpowers/notes/2026-11-24-hardware-checks.md).
+replay_includes_preroll = false

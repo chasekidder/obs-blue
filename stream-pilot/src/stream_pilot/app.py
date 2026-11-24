@@ -33,6 +33,7 @@ from .memory import MemoryGuard
 from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
+from .recording import Recording
 from .power import PowerKeyListener
 from .ssn_watch import SsnStallWatcher
 from .system import SystemCtl, V4l2Camera
@@ -148,9 +149,16 @@ async def _supervised(
         backoff = min(backoff * 2, BACKOFF_MAX_S)
 
 
-def build_features(cfg: Config, *, obs: SimpleObsClient, deck, camera) -> list[Feature]:
-    """One object per feature switch; a feature that is off only ever runs ``restore``."""
-    return []
+def build_features(
+    cfg: Config, *, obs: SimpleObsClient, deck, camera, system: SystemCtl
+) -> list[Feature]:
+    """One object per feature switch; a feature that is off only ever runs ``restore``.
+
+    Order matters for hooks that several features have (e.g. ``stream_closed``:
+    recording writes DONE before upload copies the folder)."""
+    return [
+        Recording(cfg, obs=obs, system=system),
+    ]
 
 
 def build_app(
@@ -182,7 +190,7 @@ def build_app(
     system = SystemCtl()
     camera = V4l2Camera()
     state_dir = cfg.paths.state_dir
-    features = build_features(cfg, obs=obs, deck=deck, camera=camera)
+    features = build_features(cfg, obs=obs, deck=deck, camera=camera, system=system)
 
     controller = Controller(
         cfg,

@@ -63,3 +63,16 @@ session_id = ""
 # option you want to change), then `systemctl --user restart stream-pilot`:
 # switches are only read at startup. `stream-pilot status` lists every feature
 # as on or off. `enabled` must be a bare true/false (not "true" in quotes).
+
+#[recording]
+# Records the microphone ([audio] mic_device) straight from PipeWire while live,
+# independently of OBS: Ogg Opus mono clips in ~/streams/<stream>/audio/, listed
+# in audio/manifest.jsonl once finished. Also writes ~/streams/<stream>/stream.json
+# (live id, pre-roll / Go Live / confirmed / end times, image version, clock sync)
+# and, last, ~/streams/<stream>/DONE.
+#enabled = true
+# Opus bitrate (mono) and clip length.
+#bitrate_kbps = 32
+#clip_s = 30
+# Estimate of how far Facebook's viewers are behind the room, in seconds.
+#fb_delay_s = 15

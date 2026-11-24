@@ -485,6 +485,7 @@ class FakeSystem(Gated):
         self.calls: list[tuple] = calls if calls is not None else []
         self._stop_unit = Script(stop_unit_raises)
         self._poweroff = Script(poweroff_raises)
+        self.active_units: set[str] = set()
 
     async def poweroff(self) -> None:
         self.calls.append(("system.poweroff",))
@@ -494,6 +495,21 @@ class FakeSystem(Gated):
         self.calls.append(("system.stop_user_unit", unit))
         await self._gated("stop_user_unit")
         self._stop_unit.raise_next()
+        if unit.endswith("@*.service"):
+            prefix = unit[: -len("*.service")]
+            self.active_units = {u for u in self.active_units if not u.startswith(prefix)}
+        else:
+            self.active_units.discard(unit)
+
+    async def start_user_unit(self, unit: str) -> bool:
+        self.calls.append(("system.start_user_unit", unit))
+        await self._gated("start_user_unit")
+        self.active_units.add(unit)
+        return True
+
+    async def user_unit_active(self, unit: str) -> bool:
+        self.calls.append(("system.user_unit_active", unit))
+        return unit in self.active_units
 
 
 class FakeCamera(Gated):

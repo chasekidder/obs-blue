@@ -16,7 +16,7 @@ Where things live on the PC:
 | Image defaults | `/etc/stream-pilot/config.toml` (built-in defaults in the package, not edited by hand) |
 | Controller state / status | `~/.local/state/stream-pilot/` (`state.json`, `status.json`) |
 | Failure dumps | `~/.local/state/stream-pilot/failures/<timestamp>-<step>/` |
-| Per-stream folder | `~/streams/<date>_<time>-<live id>/` with `comments.jsonl` and `report.txt` |
+| Per-stream folder | `~/streams/<date>_<time>-<live id>/` with `comments.jsonl` and `report.txt` (with `[recording]` on also `audio/`, `stream.json` and `DONE`) |
 | OBS logs | `~/.config/obs-studio/logs/` |
 | Facebook UI texts and selectors | `stream-pilot/src/stream_pilot/fb/selectors.py` in the repo (the **only** file to change when Facebook looks different) |
 
@@ -161,6 +161,15 @@ Things to verify with the real comments during the 2-hour run (all unverified ag
 4. **Missed mid-list comments.** Comments inserted in the middle of the list (replies) after the initial load can be skipped by the DOM capture's realignment. SSN is the safety net in phase 1, and `report.txt` lists comments seen by only one capture.
 5. **Real-time capture.** Chromium throttles timers in hidden or covered windows. The popout is always on top, and `chromium-launch` also passes the anti-throttling flags, so it should not be affected. Verify that lines arrive in real time: post a comment and compare the time you posted with `captured_at` (Unix seconds; `date -d @<captured_at>`). A lag of more than a few seconds, or lines arriving in bursts, is a failure.
 6. **Known limitation (not a bug to fix now).** If the popout is reloaded while several identical comments without IDs (for example `sold` from the same person) are visible, one real repeat can be dropped by the rescan. Note whether you see it; the SSN capture covers it in phase 1.
+
+If `[recording]` is on in `site.toml` (see README, Optional features), also check during the live:
+
+1. The recorder runs: `systemctl --user list-units 'stream-pilot-recorder@*'` shows one active unit.
+2. Clips appear every 30 s: `cat ~/streams/*/audio/manifest.jsonl` has a `session` line and one `clip` line per finished clip. Play one on another computer (they are Ogg Opus; copy privately, they contain the room's audio).
+3. `~/streams/<stream>/stream.json` has `live_id`, `preroll_started_at`, `go_live_pressed_at`, `live_confirmed_at`, `image` and `clock_at_live` (`ntp_synchronized` should be `true`).
+4. Restart the controller mid-live (`systemctl --user restart stream-pilot`): the recorder keeps running (same unit, no new `session` line).
+
+After the end (steps 6 and 7), the recorder unit is gone, the manifest ends with a `session_end` line, `stream.json` has `ended_at` and `clock_at_end`, and the folder has a `DONE` file.
 
 ### 6. End with a long-press
 

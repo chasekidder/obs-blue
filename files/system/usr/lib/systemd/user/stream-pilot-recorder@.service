@@ -1,0 +1,15 @@
+[Unit]
+Description=stream-pilot microphone recording into %f/audio
+# Started and stopped by stream-pilot ([recording] enabled). A unit of its own, not
+# part of stream-pilot.service, so a controller crash or restart keeps recording.
+After=pipewire-pulse.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/stream-pilot record %f
+# SIGINT makes ffmpeg finish the last clip; the recorder then lists it. Only the
+# recorder gets it and passes it on once: ffmpeg drops the clip on a second signal.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=10
+Nice=5

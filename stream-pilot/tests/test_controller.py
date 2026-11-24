@@ -102,10 +102,13 @@ class Rig:
         system=None,
         camera=None,
         clock=None,
+        features=(),
+        site_extra="",
+        sleep=None,
     ):
         tpl = EMPTY_SITE if empty_site else SITE
         site = tmp_path / "site.toml"
-        site.write_text(tpl.format(root=tmp_path.as_posix(), end_wait=end_wait))
+        site.write_text(tpl.format(root=tmp_path.as_posix(), end_wait=end_wait) + site_extra)
         self.cfg = load_config([site])
         self.shared: list[tuple] | None = [] if shared else None
         self.obs = obs or FakeObs(calls=self.shared)
@@ -128,7 +131,8 @@ class Rig:
             store=self.store,
             status=StatusWriter(self.status_path),
             dry_run=dry_run,
-            sleep=self.sleeper,
+            sleep=sleep or self.sleeper,
+            features=features(self) if callable(features) else features,
             **({"clock": clock} if clock is not None else {}),
         )
 

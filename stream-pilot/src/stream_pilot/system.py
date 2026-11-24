@@ -41,6 +41,34 @@ class SystemCtl:
     async def stop_user_unit(self, unit: str) -> None:
         await _run(self._exec, ["systemctl", "--user", "stop", unit])
 
+    async def start_user_unit(self, unit: str) -> bool:
+        return await _run(self._exec, ["systemctl", "--user", "start", unit]) == 0
+
+    async def user_unit_active(self, unit: str) -> bool:
+        argv = ["systemctl", "--user", "is-active", "--quiet", unit]
+        try:
+            proc = await self._exec(*argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return await proc.wait() == 0
+        except OSError as e:
+            log.warning("cannot run %s: %s", argv, e)
+            return False
+
+
+def escape_unit_path(path: str) -> str:
+    """``systemd-escape --path``: the instance name of a template unit for ``path``."""
+    trimmed = "/".join(p for p in str(path).split("/") if p)
+    if not trimmed:
+        return "-"
+    out = []
+    for i, ch in enumerate(trimmed):
+        if ch == "/":
+            out.append("-")
+        elif ch.isascii() and (ch.isalnum() or ch in ":_") or (ch == "." and i > 0):
+            out.append(ch)
+        else:
+            out.extend(f"\\x{b:02x}" for b in ch.encode())
+    return "".join(out)
+
 
 class V4l2Camera:
     def __init__(self, *, exec_fn: Callable[..., Any] = asyncio.create_subprocess_exec):
