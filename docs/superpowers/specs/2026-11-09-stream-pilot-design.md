@@ -229,7 +229,7 @@ A press always ends in a power-off, even if stream-pilot is down or hung: `strea
 - **Camera keys** switch the OBS scene and enable continuous autofocus on that camera's by-id device with `v4l2-ctl`, matching the current Companion behavior.
 - **Autofocus key** toggles autofocus on the active camera and shows its state.
 - **Retry key** works in any state except `LIVE` and `GOING_LIVE`.
-- **Spare key** shows `MEM` when the memory guard warns.
+- **Spare key** shows `MEM` when the memory guard warns (with `[deck_warnings]` on also `MIC?`, `CAM?` and `NET`; see `2026-11-24-07-seller.md`).
 
 Companion is no longer used.
 

@@ -25,6 +25,7 @@ from collections import Counter
 from importlib import resources
 from typing import TYPE_CHECKING, Any, Callable
 
+from stream_pilot import claims
 from stream_pilot.comment_log import Comment, CommentLog
 from stream_pilot.fb import selectors
 
@@ -37,9 +38,14 @@ BINDING_NAME = "__spComment"
 _PLACEHOLDER_RE = re.compile(r"__[A-Z][A-Z0-9_]*__")
 
 
-def _placeholders() -> dict[str, str]:
+def _placeholders(claim_highlight: bool) -> dict[str, str]:
     js_str = json.dumps  # a JS string literal (valid JS: ASCII-only escapes)
     return {
+        "__CLAIM_HIGHLIGHT__": "true" if claim_highlight else "false",
+        "__CLAIM_START_RE__": selectors.js_regex_source(claims.CLAIM_START_RE),
+        "__CLAIM_NUMBER_RE__": selectors.js_regex_source(claims.CLAIM_NUMBER_RE),
+        "__CLAIM_MAX_CHARS__": str(claims.CLAIM_MAX_CHARS),
+        "__CLAIM_CLASS__": js_str(claims.CLAIM_CLASS),
         "__ARTICLE_SELECTOR__": js_str(selectors.COMMENT_ARTICLE_SELECTOR),
         "__LABEL_ATTR__": js_str(selectors.COMMENT_LABEL_ATTR),
         "__LABEL_RE__": selectors.js_regex_source(selectors.COMMENT_LABEL_RE),
@@ -63,13 +69,14 @@ def watcher_template() -> str:
     return resources.files("stream_pilot.fb").joinpath("watcher.js").read_text(encoding="utf-8")
 
 
-def render_watcher(template: str | None = None) -> str:
+def render_watcher(template: str | None = None, *, claim_highlight: bool = False) -> str:
     """The watcher script with every placeholder filled in from ``selectors``.
 
-    Raises RuntimeError if the template uses an unknown placeholder.
+    ``claim_highlight`` is the ``[claim_highlight]`` switch. Raises RuntimeError
+    if the template uses an unknown placeholder.
     """
     script = watcher_template() if template is None else template
-    for placeholder, value in _placeholders().items():
+    for placeholder, value in _placeholders(claim_highlight).items():
         script = script.replace(placeholder, value)
     left = sorted(set(_PLACEHOLDER_RE.findall(script)))
     if left:
@@ -108,8 +115,9 @@ class _Router:
     it receives the health bookkeeping (counts / last_message_at).
     """
 
-    def __init__(self, context: "BrowserContext") -> None:
+    def __init__(self, context: "BrowserContext", claim_highlight: bool = False) -> None:
         self._context = context
+        self._claim_highlight = claim_highlight
         self._installed = False
         self._binding_task: "asyncio.Task | None" = None
         self._script_task: "asyncio.Task | None" = None
@@ -134,9 +142,8 @@ class _Router:
                 "_binding_task",
                 lambda: self._context.expose_binding(BINDING_NAME, self.on_message),
             )
-            await self._run_step(
-                "_script_task", lambda: self._context.add_init_script(render_watcher())
-            )
+            script = render_watcher(claim_highlight=self._claim_highlight)
+            await self._run_step("_script_task", lambda: self._context.add_init_script(script))
             self._installed = True
 
     async def _run_step(self, attr: str, factory: Callable[[], Any]) -> None:
@@ -176,10 +183,10 @@ class _Router:
 _ROUTERS: "weakref.WeakKeyDictionary[Any, _Router]" = weakref.WeakKeyDictionary()
 
 
-def _router_for(context: "BrowserContext") -> _Router:
+def _router_for(context: "BrowserContext", claim_highlight: bool = False) -> _Router:
     router = _ROUTERS.get(context)
     if router is None:
-        router = _ROUTERS[context] = _Router(context)
+        router = _ROUTERS[context] = _Router(context, claim_highlight)
     return router
 
 
@@ -197,10 +204,16 @@ class FbDomCapture:
       * ``counts``           accepted messages per kind (``hello``/``rescan``/``live``).
     """
 
-    def __init__(self, context: "BrowserContext", *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        context: "BrowserContext",
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        claim_highlight: bool = False,
+    ) -> None:
         self._context = context
         self._clock = clock
-        self._router = _router_for(context)
+        self._router = _router_for(context, claim_highlight)
         self.last_message_at: float | None = None
         self.counts: Counter[str] = Counter()
 

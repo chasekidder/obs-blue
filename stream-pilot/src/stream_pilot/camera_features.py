@@ -147,6 +147,21 @@ class WbFreeze(Feature):
         self._frozen = False
 
 
+async def find_mic_input(obs: Any, mic_device: str) -> str | None:
+    """The microphone's OBS input: the PulseAudio input with ``mic_device``, else
+    "Microphone", else the first PulseAudio input."""
+    data = await obs.request("GetInputList", {"inputKind": "pulse_input_capture"}) or {}
+    names = [i.get("inputName") for i in data.get("inputs", [])
+             if i.get("inputKind", "pulse_input_capture") == "pulse_input_capture"]
+    for name in names:
+        settings = await obs.request("GetInputSettings", {"inputName": name}) or {}
+        if settings.get("inputSettings", {}).get("device_id") == mic_device:
+            return name
+    if "Microphone" in names:
+        return "Microphone"
+    return names[0] if names else None
+
+
 class AudioFilters(Feature):
     name = "audio_filters"
 
@@ -155,21 +170,8 @@ class AudioFilters(Feature):
         self.cfg = cfg
         self.obs = obs
 
-    async def _mic(self) -> str | None:
-        """The microphone input: the PulseAudio input with [audio] mic_device, else "Microphone"."""
-        data = await self.obs.request("GetInputList", {"inputKind": "pulse_input_capture"}) or {}
-        names = [i.get("inputName") for i in data.get("inputs", [])
-                 if i.get("inputKind", "pulse_input_capture") == "pulse_input_capture"]
-        for name in names:
-            settings = (await self.obs.request("GetInputSettings", {"inputName": name}) or {})
-            if settings.get("inputSettings", {}).get("device_id") == self.cfg.audio.mic_device:
-                return name
-        if "Microphone" in names:
-            return "Microphone"
-        return names[0] if names else None
-
     async def items(self) -> list[Filter]:
-        mic = await self._mic()
+        mic = await find_mic_input(self.obs, self.cfg.audio.mic_device)
         if mic is None:
             log.warning("audio_filters: no microphone input in OBS")
             return []

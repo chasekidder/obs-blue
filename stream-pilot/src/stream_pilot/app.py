@@ -30,11 +30,12 @@ from .events import DeckPress, ObsConnected, RetryRequested, Tick
 from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .features import Feature, describe
 from .memory import MemoryGuard
-from .obs import SimpleObsClient
+from .obs import EVENTS_ALL, EVENTS_INPUT_VOLUME_METERS, SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
 from .branding import Branding
 from .camera_features import AudioFilters, WbFreeze
+from .deck_warnings import DeckWarnings
 from .holding import Holding
 from .recording import Recording
 from .upload import Upload
@@ -170,6 +171,7 @@ def build_features(
         Upload(cfg, system=system),
         WbFreeze(cfg, obs=obs),
         AudioFilters(cfg, obs=obs),
+        DeckWarnings(cfg, obs=obs, deck=deck),
     ]
 
 
@@ -195,7 +197,12 @@ def build_app(
         facebook = FacebookAdapter(cfg, browser, record_dir=record_dir)
     if capture is None:
         capture = CaptureAdapter(cfg, browser)
-    obs = SimpleObsClient(cfg.obs)
+    # Deck warnings read the microphone level: OBS sends it only when asked for.
+    obs_kw = (
+        {"event_subscriptions": EVENTS_ALL | EVENTS_INPUT_VOLUME_METERS}
+        if cfg.deck_warnings.enabled else {}
+    )
+    obs = SimpleObsClient(cfg.obs, **obs_kw)
     deck = StreamDeckAdapter(cfg.deck)
     power = PowerKeyListener()
     ssn_watch = SsnStallWatcher()
@@ -223,7 +230,9 @@ def build_app(
         source.set_event_sink(controller.sink)
     obs.add_connect_listener(lambda: controller.sink(ObsConnected()))
     log.info("features: %s", describe(cfg.features()))
-    guard = MemoryGuard(cfg.memory, deck, controller.note_memory)
+    warnings = next(f for f in features if isinstance(f, DeckWarnings))
+    # With deck warnings on, the memory guard's MEM goes through them (lowest priority).
+    guard = MemoryGuard(cfg.memory, warnings if warnings.enabled else deck, controller.note_memory)
 
     background: list[Awaitable] = [
         _supervised("deck", lambda: deck.start()),
@@ -232,6 +241,8 @@ def build_app(
         _supervised("memory", lambda: guard.run()),
         _supervised("ticker", lambda: _ticker(controller)),
     ]
+    if warnings.enabled:
+        background.append(_supervised("deck-warnings", lambda: warnings.run()))
     return controller, background
 
 

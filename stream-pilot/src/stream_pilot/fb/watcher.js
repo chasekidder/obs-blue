@@ -49,6 +49,11 @@
     const MODULE_HEADING_TEXT = __MODULE_HEADING_TEXT__;
     const MODULE_ANCHOR_SELECTOR = __MODULE_ANCHOR_SELECTOR__;
     const MODULE_HIDE_SELECTOR = __MODULE_HIDE_SELECTOR__;
+    const CLAIM_HIGHLIGHT = __CLAIM_HIGHLIGHT__;
+    const CLAIM_START_RE = __CLAIM_START_RE__;
+    const CLAIM_NUMBER_RE = new RegExp(__CLAIM_NUMBER_RE__.source, 'g');
+    const CLAIM_MAX_CHARS = __CLAIM_MAX_CHARS__;
+    const CLAIM_CLASS = __CLAIM_CLASS__;
 
     if (!(String(location.href).includes(COMMENTS_MARKER) || window.__spForceWatch === true)) return;
     window.__spWatcherInstalled = true;
@@ -271,6 +276,7 @@
           try { laterStep(); } finally { if (deferred) schedulePump(DEBOUNCE_MS + 5); }
         }
       } catch (e) { /* ignore */ }
+      markClaims();
     }
 
     function initialStep() {
@@ -379,6 +385,45 @@
             + MODULE_HIDE_SELECTOR.split(',').map((s) => '[' + FOCUS_ATTR + '] ' + s.trim()).join(',')
             + '{display:none!important}';
           (document.head || document.documentElement).appendChild(style);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // ---- claim highlighting ([claim_highlight]) ----------------------------
+    // Only adds a class (and one style element) to comments that look like purchase
+    // claims (stream_pilot/claims.py). The observer watches child lists, not
+    // attributes, so this never changes what is captured.
+
+    const claimSeen = new WeakMap();  // node -> {len, claim} at its last check
+
+    function looksLikeClaim(text) {
+      const t = collapse(text);
+      if (!t || t.length > CLAIM_MAX_CHARS || !CLAIM_START_RE.test(t)) return false;
+      const numbers = t.match(CLAIM_NUMBER_RE);
+      return !!numbers && numbers.length >= 2;
+    }
+
+    function markClaims() {
+      if (!CLAIM_HIGHLIGHT) return;
+      try {
+        if (!document.getElementById('sp-claim-style')) {
+          const style = document.createElement('style');
+          style.id = 'sp-claim-style';
+          style.textContent = '.' + CLAIM_CLASS + '{background:rgba(255,213,0,.28)!important;'
+            + 'box-shadow:inset 5px 0 0 #f2b600!important;border-radius:6px!important}';
+          (document.head || document.documentElement).appendChild(style);
+        }
+        for (const node of articles()) {
+          const len = (node.textContent || '').length;
+          let state = claimSeen.get(node);
+          if (!state || state.len !== len) {
+            const item = extract(node);
+            state = { len, claim: !!item && looksLikeClaim(item.text) };
+            claimSeen.set(node, state);
+          }
+          if (node.classList.contains(CLAIM_CLASS) !== state.claim) {
+            node.classList.toggle(CLAIM_CLASS, state.claim);
+          }
         }
       } catch (e) { /* ignore */ }
     }

@@ -126,3 +126,24 @@ rebalance_s = 2
 # OBS noise suppression (RNNoise) and a limiter on the microphone source.
 enabled = false
 limiter_db = -1.0
+
+[claim_highlight]
+# Highlights comments that look like purchase claims in the comments column.
+enabled = false
+
+[deck_warnings]
+# Warnings on the spare Stream Deck key in READY and LIVE, by priority: MIC? (the
+# microphone silent for mic_silent_s), CAM? (a camera below missing or not
+# delivering), NET (dropped frames or congestion sustained over net_window_s),
+# then MEM (the memory guard). They never block going live.
+enabled = false
+# Camera names from [cameras.*] to check (add "jewelry" once it is connected).
+cameras = ["main"]
+mic_silent_s = 30
+# Peak level below which the microphone counts as silent.
+mic_silent_db = -70.0
+net_window_s = 20
+# A 2 s sample is bad if more than this share of its frames was dropped, or OBS's
+# congestion was above net_congestion (0..1); NET shows when most of the window is bad.
+net_skipped_pct = 1.0
+net_congestion = 0.3

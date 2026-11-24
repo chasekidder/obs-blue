@@ -573,6 +573,13 @@ class Controller:
             log.exception("cannot save state")
         self._write_status()
         self._show(0, self._face_for(state))
+        for f in self.features:
+            hook = getattr(f, "state_changed", None)
+            if f.enabled and hook is not None:
+                try:
+                    hook(state)  # synchronous, like this method
+                except Exception:
+                    log.exception("feature %s: state_changed failed (ignored)", f.name)
 
     def _enter(self, state: State) -> None:
         if self.state != state:

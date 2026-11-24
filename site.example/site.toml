@@ -154,3 +154,27 @@ session_id = ""
 # in OBS if missing (named "... (stream-pilot)") and disabled when switched off.
 #enabled = true
 #limiter_db = -1.0
+
+#[claim_highlight]
+# Highlights comments that look like purchase claims ("21 cookie sheets 3",
+# "$5 crew mens#31", "45 penguin gift tags 2/1.00") in the comments column, so
+# they stand out from chat. It only changes how they look; the comment record
+# is the same. A false highlight (a guess like "21 40 miles") is harmless.
+#enabled = true
+
+#[deck_warnings]
+# Warnings on the spare Stream Deck key (bottom middle) before and during the
+# live; they never stop you from going live. By priority:
+#   MIC?  the microphone has been silent for mic_silent_s
+#   CAM?  a camera listed below is missing or not delivering a picture
+#   NET   frames dropped or the upload congested for most of net_window_s
+#   MEM   memory is low (as without this feature)
+#enabled = true
+# Cameras (names from [cameras.*]) to check. Add "jewelry" once the close-up
+# camera is connected and its device is set above.
+#cameras = ["main"]
+#mic_silent_s = 30
+#mic_silent_db = -70.0
+#net_window_s = 20
+#net_skipped_pct = 1.0
+#net_congestion = 0.3

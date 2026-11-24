@@ -51,6 +51,11 @@ _IDEMPOTENT = {
     "StopStream": _CODE_OUTPUT_NOT_RUNNING,
 }
 
+# obs-websocket EventSubscription bits: All (the non-high-volume events) and the
+# high-volume InputVolumeMeters (every 50 ms), which must be asked for explicitly.
+EVENTS_ALL = (1 << 11) - 1
+EVENTS_INPUT_VOLUME_METERS = 1 << 16
+
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
 _DEFAULT_REQUEST_TIMEOUT_S = 10.0
 _DISCONNECT_TIMEOUT_S = 2.0
@@ -96,8 +101,10 @@ class SimpleObsClient:
         request_factory: Callable[[str, dict | None], Any] | None = None,
         connect_timeout_s: float = _DEFAULT_CONNECT_TIMEOUT_S,
         request_timeout_s: float = _DEFAULT_REQUEST_TIMEOUT_S,
+        event_subscriptions: int | None = None,
     ):
         self._cfg = cfg
+        self._event_subscriptions = event_subscriptions
         self._client = client
         self._request_factory = request_factory
         self._connect_timeout_s = connect_timeout_s
@@ -175,6 +182,9 @@ class SimpleObsClient:
             self._client = simpleobsws.WebSocketClient(
                 url=f"ws://{self._cfg.host}:{self._cfg.port}",
                 password=self._cfg.password,
+                identification_parameters=simpleobsws.IdentificationParameters(
+                    eventSubscriptions=self._event_subscriptions
+                ),
             )
         if not self._callback_registered:
             self._client.register_event_callback(self._on_stream_state, "StreamStateChanged")

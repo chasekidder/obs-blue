@@ -381,3 +381,94 @@ async def test_empty_page_reports_alive_then_late_comments_arrive_as_rescan(pw_b
         assert [t for _, t in pairs(log.path)] == ["late one", "late two"]
     finally:
         await context.close()
+
+
+# ---- [claim_highlight] ---------------------------------------------------------
+
+from stream_pilot.claims import CLAIM_CLASS  # noqa: E402
+
+# Invented buyers; texts in the shapes seen in real sales.
+CLAIM_COMMENTS = [
+    ("Rita Vale", "21 cookie sheets 3", True),
+    ("Omar Lind", "26blue 7", True),
+    ("Pia Stone", "$5 crew mens#31", True),
+    ("Lev Moss", "#31$house$3", True),
+    ("Ida Crane", "18 $6 x mas wreath", True),
+    ("Tom Reyes", "55 4 teal", True),
+    ("Ana Holt", "6 resess X2 $3", True),
+    ("Gil Park", "45 penguin gift tags 2/1.00", True),
+    ("Uma Ford", "10- hat 3.00", True),
+    ("Tom Reyes", "55 how much", False),
+    ("Ana Holt", "6 sure", False),
+    ("Joe Wren", "20 goodnight everyone", False),
+    ("Kim Ash", "Hi Penny", False),
+]
+
+
+async def highlight_env(pw_browser, fixture_base_url, tmp_path, *, on: bool):
+    context = await pw_browser.new_context()
+    await context.add_init_script("window.__spForceWatch = true")
+    page = await context.new_page()
+    await page.goto(f"{fixture_base_url}/comments_popout.html")
+    log = CommentLog(tmp_path / "comments.jsonl", LIVE_ID)
+    cap = FbDomCapture(context, claim_highlight=on)
+    await cap.attach(page, log)
+    e = Env(context, page, log, cap, fixture_base_url)
+    await e.wait_rescans(1)
+    await e.ready()
+    for author, text, _ in CLAIM_COMMENTS:
+        await page.evaluate("([a, t]) => window.__addComment(a, t, true)", [author, text])
+    await wait_until(lambda: len(rows(e.path)) == len(SEED) + len(CLAIM_COMMENTS), what="all comments")
+    await asyncio.sleep(SETTLE_GRACE)
+    return e
+
+
+async def highlighted(page) -> dict[str, bool]:
+    return await page.evaluate(
+        """(cls) => Object.fromEntries(Array.from(document.querySelectorAll('[role=article]'))
+             .map((a) => [a.querySelector('.text').textContent, a.classList.contains(cls)]))""",
+        CLAIM_CLASS,
+    )
+
+
+async def test_claims_are_highlighted_and_capture_is_unchanged(pw_browser, fixture_base_url, tmp_path):
+    e = await highlight_env(pw_browser, fixture_base_url, tmp_path, on=True)
+    try:
+        marks = await highlighted(e.page)
+        for _, text, claim in CLAIM_COMMENTS:
+            assert marks[text] is claim, text
+        assert not any(marks[text] for _, text in SEED)
+        # capture: exactly what was posted, once each, in order
+        assert pairs(e.path) == SEED + [(a, t) for a, t, _ in CLAIM_COMMENTS]
+        # the column is still pinned and "Minimize comments" still hidden
+        assert await e.page.locator("[data-sp-comments-focus]").count() == 1
+        assert not await e.page.locator("#minimize").is_visible()
+        bg = await e.page.evaluate(
+            "(c) => getComputedStyle(document.querySelector('.' + c)).backgroundColor", CLAIM_CLASS)
+        assert bg != "rgba(0, 0, 0, 0)"
+    finally:
+        await e.cap.detach()
+        await e.context.close()
+
+
+async def test_claims_survive_a_react_rerender(pw_browser, fixture_base_url, tmp_path):
+    e = await highlight_env(pw_browser, fixture_base_url, tmp_path, on=True)
+    try:
+        await e.page.evaluate("window.__replaceAll(-1)")
+        await asyncio.sleep(SETTLE_GRACE)
+        marks = await highlighted(e.page)
+        assert all(marks[text] is claim for _, text, claim in CLAIM_COMMENTS)
+    finally:
+        await e.cap.detach()
+        await e.context.close()
+
+
+async def test_highlighting_off_adds_nothing(pw_browser, fixture_base_url, tmp_path):
+    e = await highlight_env(pw_browser, fixture_base_url, tmp_path, on=False)
+    try:
+        assert not any((await highlighted(e.page)).values())
+        assert await e.page.locator("#sp-claim-style").count() == 0
+        assert pairs(e.path) == SEED + [(a, t) for a, t, _ in CLAIM_COMMENTS]
+    finally:
+        await e.cap.detach()
+        await e.context.close()

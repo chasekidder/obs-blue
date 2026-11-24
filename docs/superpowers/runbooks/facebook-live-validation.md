@@ -160,7 +160,8 @@ Things to verify with the real comments during the 2-hour run (all unverified ag
 3. **Replies.** Facebook gives a reply a permalink containing `comment_id=<parent>&reply_comment_id=<child>`; stream-pilot uses the `reply_comment_id`, so a reply is its own line. Compare `comments.jsonl` with what the column shows: your test reply must appear as its own line. (Seen on 2026-11-24: it does.)
 4. **Missed mid-list comments.** Comments inserted in the middle of the list (replies) after the initial load can be skipped by the DOM capture's realignment. SSN is the safety net in phase 1, and `report.txt` lists comments seen by only one capture.
 5. **Real-time capture.** Chromium throttles timers in hidden or covered windows. The popout is always on top, and `chromium-launch` also passes the anti-throttling flags, so it should not be affected. Verify that lines arrive in real time: post a comment and compare the time you posted with `captured_at` (Unix seconds; `date -d @<captured_at>`). A lag of more than a few seconds, or lines arriving in bursts, is a failure.
-6. **Known limitation (not a bug to fix now).** If the popout is reloaded while several identical comments without IDs (for example `sold` from the same person) are visible, one real repeat can be dropped by the rescan. Note whether you see it; the SSN capture covers it in phase 1.
+6. **Known: the host's own comments** (posted from the stream-pilot Chromium) are captured twice: once in Facebook's "Posting..." state without an ID, then once posted (seen on 2026-11-24, with and without claim highlighting). Buyers' comments are not affected.
+7. **Known limitation (not a bug to fix now).** If the popout is reloaded while several identical comments without IDs (for example `sold` from the same person) are visible, one real repeat can be dropped by the rescan. Note whether you see it; the SSN capture covers it in phase 1.
 
 If `[recording]` is on in `site.toml` (see README, Optional features), also check during the live:
 
@@ -192,6 +193,10 @@ If `[branding]` is on:
 If `[audio_filters]` is on: in OBS, the Microphone's filters list "Noise Suppression (stream-pilot)" and "Limiter (stream-pilot)", both enabled. Speak loudly once: the meter should not reach 0 dB.
 
 If `[wb_freeze]` is on (needs both cameras): switch to the close-up camera and back. `journalctl --user -u stream-pilot -f` shows "frozen at <n> K" when its scene goes on air and "back on auto" when it leaves, also when you switch scenes in OBS itself. `v4l2-ctl -d <close-up device> -C white_balance_automatic` reads 0 while frozen.
+
+If `[claim_highlight]` is on: comments shaped like claims (`21 cookie sheets 3`, `$5 crew mens#31`) get a yellow background in the column; chat (`6 sure`, `Hi Penny`) does not. `comments.jsonl` has the same lines as without highlighting.
+
+If `[deck_warnings]` is on: mute the Microphone in OBS for 35 s while live: the spare key shows `MIC?` (journal: `deck warning: MIC?`), and the warning clears after unmuting. Unplug the main camera briefly while the key is green: `CAM?` within 10 s.
 
 ### 6. End with a long-press
 
