@@ -84,6 +84,11 @@ modules:
       disabled:
         - flatpak-system-update.timer # no unattended flatpak updates
         - bootc-fetch-apply-updates.timer # runs `bootc upgrade --apply`, which reboots
+        # no modem or printer on the stream PC
+        - ModemManager.service
+        - cups.service
+        - cups.socket
+        - cups.path
     user:
       enabled:
         - obs.service

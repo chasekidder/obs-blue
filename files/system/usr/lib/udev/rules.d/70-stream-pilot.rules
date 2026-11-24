@@ -1,6 +1,12 @@
 # Elgato Stream Deck (vendor 0fd9): seat user access for hidapi
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+# No USB autosuspend for cameras (video class 0e), audio devices (class 01) and the Stream
+# Deck: the C920 came up with power/control=auto, and a suspend/resume of a capture device
+# can drop frames or audio.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:0e????:*", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:01????:*", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", TEST=="power/control", ATTR{power/control}="on"
 # ACPI power button event devices: read by stream-pilot (evdev)
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Power Button", TAG+="uaccess"
 # UVC cameras (the C920s) power up with exposure_dynamic_framerate=1: in low light they drop to
