@@ -37,8 +37,10 @@ modules:
         - libva-intel-media-driver # already in the base; listed explicitly
         - dejavu-sans-fonts # Stream Deck key renderer font
       exclude:
-        # obs-studio pulls this in as a weak dependency; the spec wants no CEF/browser plugin
+        # obs-studio pulls these in as weak dependencies; the spec wants no browser plugin
+        # (CEF or WebKitGTK), and no scene uses a browser source
         - obs-studio-plugin-browser
+        - obs-studio-plugin-webkitgtk
     remove:
       packages:
         - firefox
