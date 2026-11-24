@@ -94,6 +94,7 @@ modules:
         - obs.service
         - chromium.service
         - stream-pilot.service
+        - stream-pilot-display-mirror.service # the display and the NanoKVM always show the same picture
       disabled:
         - flatpak-user-update.timer # enabled by user preset in the base; disable too
 

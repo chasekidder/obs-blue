@@ -68,6 +68,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - `/etc/stream-pilot/config.toml` (non-secret defaults)
   - `/usr/share/stream-pilot/obs/` (default OBS profile and scene collection)
   - `/etc/xdg/kwinrulesrc` (window placement)
+  - `stream-pilot-display-mirror.service` (user): every connected display mirrors the primary one at 0,0 (Plasma extends the desktop onto a new output, but the layout assumes one 1920x1080 screen, and the host's display and the NanoKVM must show the same picture). It re-applies mirroring with `kscreen-doctor` within a few seconds of any change.
   - `/etc/xdg/` overrides that trim Plasma (see the memory plan)
   - `/etc/xdg/` defaults that turn off the lock screen, screen energy saving (blanking/DPMS), automatic sleep, and notification popups
   - `/usr/lib/systemd/logind.conf.d/90-stream-pilot.conf` (`HandlePowerKey=ignore`, `HandlePowerKeyLongPress=ignore`)

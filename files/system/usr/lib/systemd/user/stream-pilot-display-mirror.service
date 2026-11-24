@@ -1,0 +1,12 @@
+[Unit]
+Description=Mirror every connected display onto the primary one (stream-pilot)
+PartOf=graphical-session.target
+After=graphical-session.target plasma-kwin_wayland.service
+
+[Service]
+ExecStart=/usr/bin/stream-pilot display-mirror
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

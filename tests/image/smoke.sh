@@ -75,16 +75,16 @@ group "systemd user units: syntax, enablement, oomd drop-in" '
 export XDG_RUNTIME_DIR=$(mktemp -d)
 chmod 700 "$XDG_RUNTIME_DIR"
 units=/usr/lib/systemd/user
-for u in obs chromium stream-pilot; do
+  for u in obs chromium stream-pilot stream-pilot-display-mirror; do
   test -f "$units/$u.service"
   test -L "/etc/systemd/user/graphical-session.target.wants/$u.service"
 done
 # systemd-analyze exits non-zero in some containers for reasons unrelated to
 # the unit files, so judge the output: any complaint that names one of our
 # units (Unknown key/section, Invalid argument, bad setting, ...) fails.
-out=$(systemd-analyze verify --user "$units/obs.service" "$units/chromium.service" "$units/stream-pilot.service" 2>&1 || true)
+  out=$(systemd-analyze verify --user "$units/obs.service" "$units/chromium.service" "$units/stream-pilot.service" "$units/stream-pilot-display-mirror.service" 2>&1 || true)
 echo "systemd-analyze verify output: ${out:-<none>}"
-if echo "$out" | grep -E "(obs|chromium|stream-pilot)\.service" | grep -iE "unknown|invalid|bad|error|failed to parse|not found"; then
+if echo "$out" | grep -E "(obs|chromium|stream-pilot(-display-mirror)?)\.service" | grep -iE "unknown|invalid|bad|error|failed to parse|not found"; then
   echo "unit syntax problem" >&2
   exit 1
 fi

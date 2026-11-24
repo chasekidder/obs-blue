@@ -273,6 +273,13 @@ def test_press_cli_sends_sigusr2_via_injected_runner(home, monkeypatch):
                       "stream-pilot.service"]]
 
 
+def test_display_mirror_cli_runs_the_mirror_loop(home, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "run_display_mirror", lambda: calls.append("run") or 0)
+    assert main(["display-mirror"]) == 0
+    assert calls == ["run"]
+
+
 def test_press_long_cli_sends_sigrtmin(home, monkeypatch):
     calls = []
     monkeypatch.setattr(cli, "_run_command", lambda argv: calls.append(argv) or 0)

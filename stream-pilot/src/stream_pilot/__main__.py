@@ -17,6 +17,7 @@ from pathlib import Path
 from .app import run_app
 from .chromium_prep import clear_singleton_lock, prep_chromium_profile
 from .config import Config, load_config
+from .display import run_display_mirror
 from .health import check_health, format_status
 from .power_guard import run_power_guard
 from .seed_obs import clear_stale_sentinels, reset_scenes, seed_obs
@@ -175,6 +176,11 @@ def cmd_power_guard(args: argparse.Namespace) -> int:
     return run_power_guard(args.user)
 
 
+def cmd_display_mirror(_args: argparse.Namespace) -> int:
+    """stream-pilot-display-mirror.service (user): every connected display mirrors the primary."""
+    return run_display_mirror()
+
+
 def cmd_selftest_cdp(args: argparse.Namespace) -> int:
     """CI check: pinned Playwright must still attach to the image's Chromium."""
     chromium_bin = args.chromium_bin
@@ -208,6 +214,10 @@ def build_parser() -> argparse.ArgumentParser:
         "power-guard": (
             cmd_power_guard,
             "make a power-button press power off, even if the controller is hung",
+        ),
+        "display-mirror": (
+            cmd_display_mirror,
+            "keep every connected display mirroring the primary one",
         ),
         "selftest-cdp": (
             cmd_selftest_cdp,
