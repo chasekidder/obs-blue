@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from bisect import bisect_left
 from dataclasses import dataclass
@@ -212,6 +213,10 @@ def _fmt_ts(t: float) -> str:
         return f"t={t}"
 
 
+# SSN relays a reply as "Replying to <name>: <text>"; the DOM capture has just the text.
+_SSN_REPLY_PREFIX_RE = re.compile(r"^\s*Replying to [^:]+:\s*")
+
+
 def build_report(path: Path, window_s: float = 120.0) -> str:
     path = Path(path)
     ssn: list[dict] = []
@@ -247,7 +252,10 @@ def build_report(path: Path, window_s: float = 120.0) -> str:
             return 0.0
 
     def k(r: dict) -> tuple[str, str]:
-        return _key(str(r.get("author", "")), str(r.get("text", "")))
+        text = str(r.get("text", ""))
+        if r.get("source") == "ssn":
+            text = _SSN_REPLY_PREFIX_RE.sub("", text)
+        return _key(str(r.get("author", "")), text)
 
     # Stable order: captured_at, ties keep file order (sort is stable).
     ssn.sort(key=ts)
