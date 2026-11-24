@@ -7,6 +7,10 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:0e????:*", TEST=="power/control", ATTR{power/control}="on"
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:01????:*", TEST=="power/control", ATTR{power/control}="on"
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0fd9", TEST=="power/control", ATTR{power/control}="on"
+# uvcvideo turns autosuspend back on when it binds to the camera, a moment after the "add"
+# above (seen on the stream PC: the C920 was back at power/control=auto after boot), so set
+# it again on every bind. %p is the interface; its parent is the camera's USB device.
+ACTION=="bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", DRIVER=="uvcvideo", RUN+="/usr/bin/sh -c 'echo on > /sys%p/../power/control'"
 # ACPI power button event devices: read by stream-pilot (evdev)
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Power Button", TAG+="uaccess"
 # UVC cameras (the C920s) power up with exposure_dynamic_framerate=1: in low light they drop to

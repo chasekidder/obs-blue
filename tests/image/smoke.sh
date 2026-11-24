@@ -137,6 +137,7 @@ systemctl is-enabled stream-pilot-power-guard.service
 stream-pilot power-guard --help > /dev/null
 test -f /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -q "exposure_dynamic_framerate=0" /usr/lib/udev/rules.d/70-stream-pilot.rules
+grep -q "ACTION==\"bind\".*DRIVER==\"uvcvideo\".*power/control" /usr/lib/udev/rules.d/70-stream-pilot.rules
 grep -qx "OnBootSec=2min" /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/zz-stream-pilot.conf
 grep -qx "OnCalendar=" /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/zz-stream-pilot.conf
 grep -qx "CPUWeight=idle" /usr/lib/systemd/system/rpm-ostreed.service.d/90-stream-pilot-low-priority.conf
