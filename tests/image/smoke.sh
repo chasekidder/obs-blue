@@ -62,6 +62,10 @@ files=$(rpm -ql obs-studio)   # not piped into grep -q: SIGPIPE + pipefail
 grep -q obs-ffmpeg <<< "$files"
 echo "OBS encoder plugins in /usr/lib64/obs-plugins:"
 ls /usr/lib64/obs-plugins | grep -E "obs-ffmpeg|obs-qsv"
+# [audio_filters]: noise suppression (RNNoise) and the limiter live in obs-filters
+test -f /usr/lib64/obs-plugins/obs-filters.so
+syms=$(strings /usr/lib64/obs-plugins/obs-filters.so)
+grep -q rnnoise_create <<< "$syms"
 '
 
 group "recording and upload tools: ffmpeg with libopus, PulseAudio input and segments; rsync; ssh" '
@@ -115,6 +119,8 @@ grep -qx "ExecStart=/usr/bin/stream-pilot upload" "$units/stream-pilot-upload.se
 grep -qx "IOSchedulingClass=idle" "$units/stream-pilot-upload.service"
 stream-pilot upload --help > /dev/null
 stream-pilot upload-key --help > /dev/null
+stream-pilot rebalance --help > /dev/null
+command -v v4l2-ctl
 out=$(systemd-analyze verify --user "$units/stream-pilot-upload.service" "$units/stream-pilot-upload.timer" 2>&1 || true)
 if grep -E "stream-pilot-upload\.(service|timer)" <<< "$out" | grep -iE "unknown|invalid|bad|error|failed to parse"; then
   echo "upload unit syntax problem" >&2

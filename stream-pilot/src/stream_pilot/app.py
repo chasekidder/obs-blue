@@ -34,6 +34,7 @@ from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
 from .branding import Branding
+from .camera_features import AudioFilters, WbFreeze
 from .holding import Holding
 from .recording import Recording
 from .upload import Upload
@@ -167,6 +168,8 @@ def build_features(
         Branding(cfg, obs=obs, fb=fb, deck=deck),
         Recording(cfg, obs=obs, system=system),
         Upload(cfg, system=system),
+        WbFreeze(cfg, obs=obs),
+        AudioFilters(cfg, obs=obs),
     ]
 
 

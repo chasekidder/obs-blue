@@ -189,6 +189,10 @@ If `[branding]` is on:
 2. The camera scenes show the watermark in the configured corner.
 3. When you end the live (steps 6 and 7), the "Outro" card is on air for `outro_s` seconds and the status key counts down before OBS stops; afterwards OBS is back on the camera scene.
 
+If `[audio_filters]` is on: in OBS, the Microphone's filters list "Noise Suppression (stream-pilot)" and "Limiter (stream-pilot)", both enabled. Speak loudly once: the meter should not reach 0 dB.
+
+If `[wb_freeze]` is on (needs both cameras): switch to the close-up camera and back. `journalctl --user -u stream-pilot -f` shows "frozen at <n> K" when its scene goes on air and "back on auto" when it leaves, also when you switch scenes in OBS itself. `v4l2-ctl -d <close-up device> -C white_balance_automatic` reads 0 while frozen.
+
 ### 6. End with a long-press
 
 1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.

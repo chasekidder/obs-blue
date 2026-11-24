@@ -111,3 +111,18 @@ watermark_text = "Your logo here"
 watermark_corner = "top-right"
 outro_text = "Thanks for watching!\nSee you next time"
 outro_s = 8
+
+[wb_freeze]
+# While the close-up camera's scene is on air, its auto white balance is frozen,
+# and turned back on when it leaves. Off by default: on the C920 a freeze shifts
+# the colour (see docs/superpowers/notes/2026-11-24-hardware-checks.md).
+enabled = false
+camera = "jewelry"
+freeze_exposure = false
+# `stream-pilot rebalance`: seconds of auto white balance before freezing again.
+rebalance_s = 2
+
+[audio_filters]
+# OBS noise suppression (RNNoise) and a limiter on the microphone source.
+enabled = false
+limiter_db = -1.0

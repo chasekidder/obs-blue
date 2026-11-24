@@ -133,3 +133,24 @@ session_id = ""
 # The title goes in the [facebook] section above, if you want another one:
 #   live_title_template = "{group_name} Sale – {date:%b %-d}"
 # {group_name} is [facebook] group_name, {date} today's date (strftime codes).
+
+#[wb_freeze]
+# While the close-up camera's scene is on air (whatever switched it: a deck key
+# or OBS), its auto white balance is frozen so colourful items do not shift the
+# colours; it goes back to auto when the scene leaves. NOT RECOMMENDED on the
+# C920 yet: when frozen it jumps to a stored value and the value it reports
+# under auto gives a visibly different colour (2026-11-24 hardware notes), so a
+# freeze shifts the colour a little. `stream-pilot rebalance` re-balances a
+# frozen camera (auto for rebalance_s, then frozen again).
+#enabled = true
+# The camera from the [cameras.*] sections above.
+#camera = "jewelry"
+# Freeze exposure as well.
+#freeze_exposure = false
+#rebalance_s = 2
+
+#[audio_filters]
+# OBS noise suppression (RNNoise) and a limiter on the microphone source, added
+# in OBS if missing (named "... (stream-pilot)") and disabled when switched off.
+#enabled = true
+#limiter_db = -1.0

@@ -254,6 +254,35 @@ def cmd_upload_key(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rebalance(args: argparse.Namespace) -> int:
+    """Re-balance a frozen camera's white balance: auto for rebalance_s, then frozen again."""
+    from .camera_ctl import V4l2Controls
+    from .camera_features import WbFreeze
+
+    cfg = _load_config()
+    name = args.camera or cfg.wb_freeze.camera
+    cam = cfg.cameras.get(name)
+    if cam is None:
+        print(f"rebalance: no camera {name!r} in the config", file=sys.stderr)
+        return 1
+
+    async def run() -> int:
+        ctl = V4l2Controls(cam.device)
+        names = await ctl.names()
+        if names.wb_auto is None:
+            print(f"rebalance: {cam.device} has no white balance controls", file=sys.stderr)
+            return 1
+        if await ctl.get(names.wb_auto) == 1:
+            print(f"rebalance: {name} is on auto white balance; nothing to re-balance")
+            return 0
+        await WbFreeze(cfg, obs=None, controls=ctl).rebalance()
+        print(f"rebalance: {name} re-balanced and frozen at "
+              f"{await ctl.get(names.wb_temp) if names.wb_temp else '?'} K")
+        return 0
+
+    return asyncio.run(run())
+
+
 def cmd_selftest_cdp(args: argparse.Namespace) -> int:
     """CI check: pinned Playwright must still attach to the image's Chromium."""
     chromium_bin = args.chromium_bin
@@ -306,6 +335,10 @@ def build_parser() -> argparse.ArgumentParser:
             "copy the stream folders, status and failure snapshots to [upload] target "
             "(run by stream-pilot-upload.timer)",
         ),
+        "rebalance": (
+            cmd_rebalance,
+            "a frozen camera's white balance: auto for a moment, then frozen again ([wb_freeze])",
+        ),
         "upload-key": (
             cmd_upload_key,
             "print the upload SSH public key and a restricted authorized_keys line",
@@ -347,6 +380,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Chromium executable (default: cdp.chromium_bin from the config)",
     )
     parsers["record"].add_argument("stream_dir", metavar="STREAM_DIR")
+    parsers["rebalance"].add_argument(
+        "--camera", default=None, metavar="NAME",
+        help="camera name from the config (default: [wb_freeze] camera)",
+    )
     parsers["power-guard"].add_argument(
         "--user",
         default="stream",

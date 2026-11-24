@@ -111,6 +111,20 @@ class BrandingCfg:
 
 
 @dataclass(frozen=True)
+class WbFreezeCfg:
+    enabled: bool
+    camera: str
+    freeze_exposure: bool
+    rebalance_s: float
+
+
+@dataclass(frozen=True)
+class AudioFiltersCfg:
+    enabled: bool
+    limiter_db: float
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -145,7 +159,9 @@ class PathsCfg:
 
 # Config sections that are feature switches: each has a boolean ``enabled``
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
-FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload", "holding", "branding")
+FEATURE_SECTIONS: tuple[str, ...] = (
+    "ssn", "recording", "upload", "holding", "branding", "wb_freeze", "audio_filters",
+)
 
 
 @dataclass(frozen=True)
@@ -164,6 +180,8 @@ class Config:
     upload: UploadCfg
     holding: HoldingCfg
     branding: BrandingCfg
+    wb_freeze: WbFreezeCfg
+    audio_filters: AudioFiltersCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -262,6 +280,8 @@ def load_config(paths: list[Path]) -> Config:
         "upload": UploadCfg,
         "holding": HoldingCfg,
         "branding": BrandingCfg,
+        "wb_freeze": WbFreezeCfg,
+        "audio_filters": AudioFiltersCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":
