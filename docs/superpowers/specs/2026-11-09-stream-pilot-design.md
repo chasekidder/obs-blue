@@ -20,7 +20,7 @@ Success means a host can power on, wait for a green key, press it, run a 2-4 hou
 
 These come from `orig_scripts/` and the OBS export from `stream-pc` (logs from Aug–Nov 2026).
 
-- **Hardware:** i5-9500 (6 cores), Intel UHD 630, one 8 GB DDR4-2666 DIMM (single channel; no spare RAM available). The iGPU shares that single memory channel.
+- **Hardware:** i5-9500 (6 cores), Intel UHD 630, one 8 GB DDR4-2666 DIMM (single channel; no spare RAM available). The iGPU shares that single memory channel. (Since then the PC has 16 GB of RAM, measured on 2026-11-24; the memory plan below was made for 8 GB and still applies.)
 - **The target is a Facebook Group, posted as a personal profile.** Facebook removed Groups from the Graph API in 2024, and SSN's API bridge only works for Pages. Live setup and comment capture therefore have to happen in the browser. This is a hard requirement; moving to a Page is out of scope.
 - **The base image is Kinoite (Plasma 6), Wayland only.** xdotool and pysikuli (X11, screenshot matching) cannot be carried over.
 - **OBS today:** Flatpak 32.2.1 (not v31 as `CK_README.txt` says), 1080x1920 portrait, 30 fps, x264 veryfast CBR 6000, libfdk AAC 160. It has a Custom Browser Dock ("Facebook Chat" = SSN dock), which forces OBS onto XWayland and runs an extra Chromium engine (CEF) inside OBS.
