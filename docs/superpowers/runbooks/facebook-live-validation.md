@@ -120,10 +120,10 @@ Pass criteria for part A: the status key reaches green `GO LIVE`, no failure fol
    ```
    systemctl --user start stream-pilot
    ```
-2. Wait for the green `GO LIVE` key, then press it **once** (a short press; a press of 3 seconds or more is the "end" gesture).
+2. Wait for the green `GO LIVE` key, then press it **once** (a short press; a press of 3 seconds or more is the "end" gesture). Over SSH, `stream-pilot press` does the same.
 3. Check, within the first minute:
    - The key goes blinking blue, then red `LIVE` with the elapsed time.
-   - The Facebook **comments popout opens as a borderless column to the right of OBS**, on top of everything, with no title bar (KWin rule in `/etc/xdg/kwinrulesrc`).
+   - The Facebook **comments column opens as a borderless column to the right of OBS**, on top of everything, with no title bar (KWin rule in `/etc/xdg/kwinrulesrc`). It is the live's dashboard showing only its Comments panel (heading "Comments", the comments, a "Write a comment…" box); seeing the dashboard's sidebar or widgets instead means the watcher did not pin the panel.
    - If the popout instead opens as a normal tab or window with a title bar, the `chromium --app=` handoff to the running browser failed and stream-pilot used its fallback (a CDP-opened window; comments are still captured). Confirm with `journalctl --user -u stream-pilot -b | grep -i "falling back"`. The handoff could not be tested in the headless test container, so this is a real hardware check; report it with the log line.
    - The OBS window fills the left part of the screen and does not overlap the popout.
    - In Facebook on your phone or another PC, the live is visible in the test Group.
@@ -156,15 +156,15 @@ Things to verify with the real comments during the 2-hour run (all unverified ag
    ```
    grep -c '"fb_comment_id": *"[0-9]' ~/streams/*/comments.jsonl
    ```
-   A count above zero means IDs are available from the popout page. If it is zero for `fb_dom`, IDs are not in the DOM; dedupe then relies on in-order alignment only (this is the designed fallback; check the report in step 8).
-3. **Replies.** Facebook may give a reply a permalink containing `comment_id=<parent>&reply_comment_id=<child>`. If stream-pilot reads only `comment_id`, replies would be treated as duplicates of their parent and dropped. Compare `comments.jsonl` with what the popout shows: your test reply must appear as its own line.
+   A count above zero means IDs are available from the popout page. If it is zero for `fb_dom`, IDs are not in the DOM; dedupe then relies on in-order alignment only (this is the designed fallback; check the report in step 8). (Seen on 2026-11-24: every `fb_dom` line had an ID.)
+3. **Replies.** Facebook gives a reply a permalink containing `comment_id=<parent>&reply_comment_id=<child>`; stream-pilot uses the `reply_comment_id`, so a reply is its own line. Compare `comments.jsonl` with what the column shows: your test reply must appear as its own line. (Seen on 2026-11-24: it does.)
 4. **Missed mid-list comments.** Comments inserted in the middle of the list (replies) after the initial load can be skipped by the DOM capture's realignment. SSN is the safety net in phase 1, and `report.txt` lists comments seen by only one capture.
 5. **Real-time capture.** Chromium throttles timers in hidden or covered windows. The popout is always on top, and `chromium-launch` also passes the anti-throttling flags, so it should not be affected. Verify that lines arrive in real time: post a comment and compare the time you posted with `captured_at` (Unix seconds; `date -d @<captured_at>`). A lag of more than a few seconds, or lines arriving in bursts, is a failure.
 6. **Known limitation (not a bug to fix now).** If the popout is reloaded while several identical comments without IDs (for example `sold` from the same person) are visible, one real repeat can be dropped by the rescan. Note whether you see it; the SSN capture covers it in phase 1.
 
 ### 6. End with a long-press
 
-1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release.
+1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.
 2. Expected: the key shows red `ENDING`, OBS stops streaming, then the controller returns to setup (`SETUP`, then green `GO LIVE`) without powering off.
 3. In Facebook (phone or other PC), check that the live **ended by itself**, with no manual "End live video". This works because Facebook's "end live when streaming stops" setting is on; stream-pilot waits 5 seconds (`fb_end_wait_s`) after OBS stops.
 4. If the live is still running on Facebook, end it by hand in Facebook, and note it as a failure. Check the setup screenshot from step 4 for whether that setting was visible.

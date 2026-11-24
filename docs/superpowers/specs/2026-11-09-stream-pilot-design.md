@@ -124,9 +124,11 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   | Window | How it is opened | Placement |
   |---|---|---|
   | Producer dashboard | Main browser window, navigated over CDP | Behind OBS; parked on `about:blank` once live |
-  | Comments popout | `chromium --app=<popout url>` against the same profile (hands off to the running browser) | Borderless chat column directly right of the OBS preview, always on top, page zoom set for legibility |
+  | Comments column ("popout") | `chromium --app=<comments url>` against the same profile (hands off to the running browser) | Borderless chat column directly right of the OBS preview, always on top, page zoom set for legibility |
 
-  KWin rules match the popout by its app-window ID (`chrome-<host>__<path>-…`), not by title. OBS gets a matching rule for the rest of the screen, so the layout is fixed. The SSN dock is not displayed.
+  KWin rules match the column by its app-window ID (`chrome-www.facebook.com__live_producer…`), not by title. OBS gets a matching rule for the rest of the screen, so the layout is fixed. The SSN dock is not displayed.
+
+  **2026 Live Producer (found on the stream PC, 2026-11-24):** the old comments popout (`/live/producer/dashboard/<id>/COMMENTS/`) renders blank, and there is no comments-only page. The column therefore opens the live's dashboard (`/live/producer/v2/<id>/dashboard/`) with a `#stream-pilot-comments/<id>/` marker that Facebook keeps. The comment watcher runs only on pages with the marker (the main producer tab shows the same dashboard during go-live) and pins the dashboard's Comments module over the window, hiding the rest of the page. The dashboard is not responsive, so in a 576 px window the module would otherwise be off-screen.
 
 ## OBS
 
@@ -195,8 +197,8 @@ On the producer URL for the configured Group, by role or text rather than by pix
 ### Going live and live
 
 1. Click `Go live`, get past the `Add title` interstitial, and wait for `End live video`.
-2. Read the live video ID from the URL, create `~/streams/<date>-<live id>/`, and open the comments popout (`/live/producer/dashboard/<id>/COMMENTS/`) as the chat column window.
-3. Start the comment watcher on the popout. SSN's extension picks the popout up on its own.
+2. Read the live video ID from the URL, create `~/streams/<date>-<live id>/`, and open the comments column (the live's dashboard with stream-pilot's marker, see Windows) as the chat column window.
+3. Start the comment watcher on the column. SSN's extension picks the live up on its own.
 4. **Park the dashboard tab** on `about:blank`. Nothing needs it after this, because ending is done from OBS.
 5. Bring OBS to the front.
 
@@ -287,6 +289,7 @@ These never go in the repo or the image:
 - **Tailscale** (already in the image) plus SSH key access for the `stream` user.
 - **RustDesk** (Flatpak) for unattended desktop access. An XDG autostart entry starts RustDesk at login (no arguments, so the app runs the connection server itself) and pre-authorizes it in the `kde-authorized` portal permission table (Plasma 6.3+), since the remote-desktop portal cannot persist a grant. It must not run `rustdesk --server`: RustDesk then assumes a root service injects input through `/dev/uinput`, which a Flatpak can't reach, and opens a view-only ScreenCast session. A forced KWin rule keeps the RustDesk window minimized. It is not a systemd user unit because `flatpak run` moves the app into its own scope. **NanoKVM** is the guaranteed fallback.
 - `stream-pilot status` prints the state, the last error, memory readings, and the current live ID.
+- `stream-pilot press` is a short press of the status key (GO LIVE when green, retry in ERROR) and `stream-pilot press --long` a 3 s hold (ends a live without powering off), for when nobody is at the Stream Deck.
 
 ## Testing
 
@@ -325,7 +328,7 @@ These never go in the repo or the image:
 | Parked dashboard does not affect the live or auto-end | Keep the dashboard open, reload it every 30 min |
 | SSN extension force-installs by policy in current Chromium | Ship it unpacked and load it at startup |
 | Popout is legible at a zoom that fits the chat column beside the portrait preview | Narrow the OBS area or shrink the preview scale |
-| Facebook comment IDs are available from the popout page or its network responses | In-order alignment dedupe only (already designed) |
+| Facebook comment IDs are available from the popout page or its network responses (**verified 2026-11-24:** every comment in the dashboard's Comments module has one; a reply's own id is its `reply_comment_id`) | In-order alignment dedupe only (already designed) |
 | greenboot health check and rollback work on this bootc base | Manual `bootc rollback` over SSH |
 | RustDesk unattended access on Plasma 6 Wayland | NanoKVM |
 | KWin rules and Plasma trims apply from `/etc/xdg` | First-boot seeding into `~/.config` |

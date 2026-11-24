@@ -74,6 +74,7 @@ For the full test-Group walkthrough (screenshot recording, a complete test live,
 Useful afterwards:
 
 - `stream-pilot status` shows the current state.
+- `stream-pilot press` presses the status key over SSH (goes live when it shows `GO LIVE`); `stream-pilot press --long` ends a live without powering off.
 - `journalctl --user -u stream-pilot -f` follows the live log.
 - If an update misbehaves and greenboot did not catch it, roll back over SSH with `sudo bootc rollback && sudo systemctl reboot` (as an admin user or root).
 
