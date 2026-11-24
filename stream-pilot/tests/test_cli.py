@@ -256,7 +256,7 @@ def test_retry_cli_sends_sigusr1_via_injected_runner(home, monkeypatch):
 
     monkeypatch.setattr(cli, "_run_command", fake_runner)
     assert main(["retry"]) == 0
-    assert calls == [["systemctl", "--user", "kill", "-s", "SIGUSR1",
+    assert calls == [["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGUSR1",
                       "stream-pilot.service"]]
 
 
@@ -269,7 +269,7 @@ def test_press_cli_sends_sigusr2_via_injected_runner(home, monkeypatch):
 
     monkeypatch.setattr(cli, "_run_command", fake_runner)
     assert main(["press"]) == 0
-    assert calls == [["systemctl", "--user", "kill", "-s", "SIGUSR2",
+    assert calls == [["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGUSR2",
                       "stream-pilot.service"]]
 
 

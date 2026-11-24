@@ -90,7 +90,8 @@ def _run_command(argv: list[str]) -> int:
 def cmd_retry(_args: argparse.Namespace) -> int:
     try:
         return _run_command(
-            ["systemctl", "--user", "kill", "-s", "SIGUSR1", "stream-pilot.service"]
+            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGUSR1",
+             "stream-pilot.service"]
         )
     except OSError as exc:
         print(f"retry failed: {exc}", file=sys.stderr)
@@ -100,7 +101,8 @@ def cmd_retry(_args: argparse.Namespace) -> int:
 def cmd_press(_args: argparse.Namespace) -> int:
     try:
         return _run_command(
-            ["systemctl", "--user", "kill", "-s", "SIGUSR2", "stream-pilot.service"]
+            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGUSR2",
+             "stream-pilot.service"]
         )
     except OSError as exc:
         print(f"press failed: {exc}", file=sys.stderr)
