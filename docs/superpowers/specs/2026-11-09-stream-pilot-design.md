@@ -145,6 +145,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - The stream key and websocket password are left out.
 - **Stream server and key:** stream-pilot reads both from the Facebook setup page on every boot and applies them with `SetStreamServiceSettings` (`rtmp_custom`). The key never enters the image or the repo.
 - **Seeding is one-time.** Changes the host makes in OBS persist.
+- **No connection-failure prompt:** OBS opens a modal "Failed to connect ... check your stream key" box for every failed stream start, which on this PC means Facebook briefly refusing the key while stream-pilot retries. A KWin script (`/usr/share/kwin/scripts/streampilotobsdialogs`, enabled in `/etc/xdg/kwinrc`) closes it as soon as it appears; the host reads the real state on the Stream Deck.
 - **No crash prompt:** `obs.service`'s pre-start step also deletes leftover `~/.config/obs-studio/.sentinel/run_*` files. OBS 32 removes its sentinel only on an orderly exit, and a leftover one (power cut, forced power-off) makes the next start wait on a modal "OBS Studio Crash Detected" dialog that `--disable-shutdown-check` does not suppress, so obs-websocket never comes up and every later boot stops there.
 
 ## stream-pilot
@@ -175,7 +176,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
 | `NO_NET` | grey `NO NET` | facebook.com reachable |
 | `LOGIN` | orange `LOG IN` | Producer page loads logged in |
 | `SETUP` | blue `SETUP` | Facebook setup done, key applied to OBS, OBS streaming, Facebook shows the incoming preview |
-| `READY` | green `GO LIVE` | Stream key pressed |
+| `READY` | green `GO LIVE` | Stream key pressed; back to `SETUP` as soon as the pre-roll stops or Facebook loses the preview |
 | `GOING_LIVE` | blinking blue | `End live video` visible |
 | `LIVE` | red `LIVE` + elapsed time | Power button, a 3 s long-press on the stream key, or OBS losing the connection |
 | `RECONNECTING` | flashing red `RECONNECT` | OBS reconnected → `LIVE`; power button → `ENDING` |
@@ -192,7 +193,8 @@ On the producer URL for the configured Group, by role or text rather than by pix
 4. Open `Advanced settings` and turn on `Persistent stream key` if it is off. Check that end-live-when-stream-stops is on, if the setup page shows that setting.
 5. Read the server URL and stream key, apply them to OBS, and start the OBS stream as a private pre-roll.
 6. Wait until Facebook shows the incoming preview and `Go live` is enabled, then enter `READY`.
-7. While in `READY`, if Facebook reports the preview lost or expired, re-run setup from step 1.
+7. While in `READY`, re-run setup from step 1 when OBS's pre-roll stops (its stop event, or the 15 s tick finding OBS not streaming) or Facebook loses the preview: a "lost" text, or the Go live button disabled or gone (Facebook can silently reset the page to "Select a video source"). The key must never stay green when nothing can go live.
+8. Facebook refuses the persistent key's RTMP connects for about 60 s after a stream stopped. Setup stops an old pre-roll before its Facebook steps and starts the new one no earlier than 65 s after OBS last stopped streaming.
 
 ### Going live and live
 
