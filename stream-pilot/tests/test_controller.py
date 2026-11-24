@@ -101,6 +101,7 @@ class Rig:
         capture=None,
         system=None,
         camera=None,
+        clock=None,
     ):
         tpl = EMPTY_SITE if empty_site else SITE
         site = tmp_path / "site.toml"
@@ -128,6 +129,7 @@ class Rig:
             status=StatusWriter(self.status_path),
             dry_run=dry_run,
             sleep=self.sleeper,
+            **({"clock": clock} if clock is not None else {}),
         )
 
     @property
@@ -221,8 +223,8 @@ async def test_happy_path_reaches_ready_in_order(make):
         ("fb.reachable",),
         ("fb.refresh_ssn",),
         ("fb.logged_in",),
-        ("fb.setup_live",),
         ("obs.stream_active",),
+        ("fb.setup_live",),
         ("obs.set_stream_target", rig.fb.target),
         ("obs.start_stream",),
         ("fb.wait_preview_ready", rig.cfg.timeouts.preview_s),
@@ -409,6 +411,42 @@ async def test_setup_stops_already_active_obs_stream_first(make):
     names = rig.names(rig.obs)
     assert names.index("obs.stop_stream") < names.index("obs.set_stream_target")
     assert names.index("obs.set_stream_target") < names.index("obs.start_stream")
+
+
+async def test_setup_waits_out_facebooks_reconnect_window_after_stopping_a_pre_roll(make):
+    rig = make(shared=True, obs=None, clock=lambda: 100.0)
+    rig.obs.active = True
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    calls = [c[0] for c in rig.shared]
+    # the stop comes before Facebook's setup steps, so they count toward the wait
+    assert calls.index("obs.stop_stream") < calls.index("fb.setup_live")
+    wait = ("sleep", controller_mod.PREROLL_RECONNECT_WAIT_S)
+    assert rig.shared.index(wait) < calls.index("obs.start_stream")
+    assert controller_mod.PREROLL_RECONNECT_WAIT_S >= 60  # measured on the stream PC: ~60 s
+
+
+async def test_setup_after_an_obs_stop_event_waits_only_the_rest_of_the_window(make):
+    now = [100.0]
+    rig = make(clock=lambda: now[0])
+    await rig.c.handle(ObsStreamState(active=False))
+    now[0] = 130.0
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert controller_mod.PREROLL_RECONNECT_WAIT_S - 30 in rig.sleeper.calls
+
+
+async def test_setup_long_after_the_last_stop_does_not_wait(make):
+    now = [100.0]
+    rig = make(clock=lambda: now[0])
+    await rig.c.handle(ObsStreamState(active=False))
+    now[0] = 100.0 + controller_mod.PREROLL_RECONNECT_WAIT_S + 1
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.sleeper.calls == []
 
 
 async def test_preview_wait_restarts_a_pre_roll_that_facebook_dropped(make, monkeypatch):
@@ -1486,7 +1524,8 @@ async def test_setup_attempt_guard_checks_state_on_every_attempt(rig):
     await rig.c._setup_phase()  # attempt 1 fails; attempt 2 sees LIVE and bails
     assert rig.c.state == State.LIVE
     assert rig.names(rig.fb).count("fb.setup_live") == 1
-    assert "obs.stop_stream" not in rig.names(rig.obs)
+    # attempt 1 replaced the pre-roll before the live appeared; the retry touched nothing
+    assert rig.names(rig.obs).count("obs.stop_stream") == 1
     assert "obs.start_stream" not in rig.names(rig.obs)
 
 

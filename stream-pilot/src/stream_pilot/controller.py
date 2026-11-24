@@ -83,6 +83,10 @@ SSN_HEAL_MIN_INTERVAL_S = 60.0
 # can refuse an RTMP connect made right after the previous one with the same
 # persistent key stopped; OBS then just stops, so the pre-roll is restarted.
 PREROLL_CHECK_S = 5.0
+# Facebook refuses the persistent key's RTMP connects for about 60 s after a stream
+# stopped (measured on the stream PC), and OBS opens a modal "Failed to connect"
+# dialog for every refusal, so a new pre-roll starts no earlier than this after a stop.
+PREROLL_RECONNECT_WAIT_S = 65.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
@@ -139,6 +143,7 @@ class Controller:
         self._memory: dict | None = None
         self._obs_ok = False
         self._fb_ok = False
+        self._stream_stopped_at: float | None = None  # clock() when OBS last stopped streaming
         self._flow: asyncio.Task | None = None
         self._restart: asyncio.Task | None = None
         self._reattach: asyncio.Task | None = None
@@ -319,6 +324,8 @@ class Controller:
         )
 
     async def _on_obs(self, ev: ObsStreamState) -> None:
+        if not ev.active:
+            self._stream_stopped_at = self.clock()
         if self.state not in LIVE_STATES:
             return
         if ev.reconnecting:
@@ -672,7 +679,9 @@ class Controller:
             if self._setup_blocked_by_live():
                 return False
             try:
-                target = await self.fb.setup_live()
+                # Facebook only shows a stream that connects after this setup's live
+                # draft exists, so a running pre-roll is always replaced. It is stopped
+                # before the setup steps, which then count toward the reconnect wait.
                 if await self.obs.stream_active():
                     # SETUP: no live exists (the live only starts with go-live),
                     # so replacing the pre-roll stream is safe. Local guard: never
@@ -682,7 +691,14 @@ class Controller:
                     # OBS refuses SetStreamServiceSettings while streaming.
                     await self.obs.stop_stream()
                     await self._wait_stream_stopped()
+                    self._stream_stopped_at = self.clock()
+                target = await self.fb.setup_live()
                 await self.obs.set_stream_target(target)
+                wait = self._reconnect_wait_left()
+                if wait > 0:
+                    log.info("waiting %.0fs before reconnecting: Facebook refuses the key "
+                             "right after a stream stopped", wait)
+                    await self._sleep(wait)
                 await self.obs.start_stream()
                 await self._wait_preview_keeping_pre_roll(t.preview_s)
                 return True
@@ -691,6 +707,11 @@ class Controller:
                 if attempt >= attempts:
                     raise
         return True  # unreachable: the loop returns or raises
+
+    def _reconnect_wait_left(self) -> float:
+        if self._stream_stopped_at is None:
+            return 0.0
+        return max(0.0, PREROLL_RECONNECT_WAIT_S - (self.clock() - self._stream_stopped_at))
 
     async def _wait_preview_keeping_pre_roll(self, timeout_s: float) -> None:
         preview = asyncio.ensure_future(self.fb.wait_preview_ready(timeout_s))
@@ -701,6 +722,8 @@ class Controller:
                     return preview.result()
                 if self._setup_blocked_by_live():
                     return await preview
+                if self._reconnect_wait_left() > 0:
+                    continue  # a refused connect just stopped it; retrying now is refused too
                 if not await self.obs.stream_active():
                     log.warning("OBS pre-roll stream stopped before Facebook saw it; restarting it")
                     await self.obs.start_stream()
