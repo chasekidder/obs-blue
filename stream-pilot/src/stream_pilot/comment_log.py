@@ -140,6 +140,18 @@ class CommentLog:
     def _is_seen(self, c: Comment) -> bool:
         return bool(c.fb_comment_id) and c.fb_comment_id in self._seen_ids
 
+    def _record_gap(self, batch_size: int) -> None:
+        gap = {"at": self._clock(), "batch_size": batch_size}
+        self.gaps.append(gap)
+        self._write(
+            {
+                "source": "gap",
+                "captured_at": gap["at"],
+                "batch_size": gap["batch_size"],
+                "live_id": self.live_id,
+            }
+        )
+
     def ingest_dom(self, batch: list[Comment], *, rescan: bool) -> int:
         """Record fb_dom comments; returns the number of lines appended."""
         if not batch:
@@ -160,20 +172,17 @@ class CommentLog:
         tail = self._dom_keys[-len(batch):]
         if not tail:
             start = 0
+        elif all(c.fb_comment_id for c in batch):
+            # Every item is deduped by its ID below; the history overlaps the log
+            # iff one of its IDs was seen (texts may differ, e.g. after an update).
+            start = 0
+            if not any(self._is_seen(c) for c in batch):
+                self._record_gap(len(batch))
         else:
             found = _new_suffix_start(tail, batch_keys)
             if found is None:
                 start = 0
-                gap = {"at": self._clock(), "batch_size": len(batch)}
-                self.gaps.append(gap)
-                self._write(
-                    {
-                        "source": "gap",
-                        "captured_at": gap["at"],
-                        "batch_size": gap["batch_size"],
-                        "live_id": self.live_id,
-                    }
-                )
+                self._record_gap(len(batch))
             else:
                 start = found
 

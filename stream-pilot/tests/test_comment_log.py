@@ -195,10 +195,18 @@ def test_rescan_with_ids_skips_seen_ids_and_aligns(tmp_path):
 def test_rescan_id_already_seen_is_skipped_even_in_appended_suffix(tmp_path):
     log, p = make(tmp_path)
     seed(log, C("u", "a", "1"), C("u", "b", "2"))
-    # no overlap by key, but ID "2" was already seen -> skipped; gap recorded
+    # no overlap by key, but ID "2" was already seen -> skipped; it overlaps by ID: no gap
     n = log.ingest_dom([C("u", "zzz", "2"), C("u", "new", "9")], rescan=True)
     assert n == 1
     assert texts(p) == ["a", "b", "new"]
+    assert log.gaps == []
+
+
+def test_rescan_of_only_unseen_ids_records_a_gap(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("u", "a", "1"), C("u", "b", "2"))
+    # the visible history no longer reaches anything logged: comments may be missing
+    assert log.ingest_dom([C("u", "x", "7"), C("u", "y", "8")], rescan=True) == 2
     assert len(log.gaps) == 1
 
 
@@ -259,6 +267,16 @@ def test_rescan_gap_still_appends_id_items_only_if_unseen(tmp_path):
     assert n == 2
     assert texts(p) == ["x", "y", "q", "r"]
     assert len(log.gaps) == 1
+
+
+def test_rescan_of_only_id_items_needs_no_alignment_and_records_no_gap(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("u", "x Like Reply", "1"), C("u", "y Like Reply", "2"))
+    # same comments, text extracted differently (e.g. after a watcher update): no overlap by text
+    n = log.ingest_dom([C("u", "x", "1"), C("u", "y", "2"), C("u", "z", "3")], rescan=True)
+    assert n == 1
+    assert texts(p) == ["x Like Reply", "y Like Reply", "z"]
+    assert log.gaps == []
 
 
 def test_ssn_never_deduped(tmp_path):
