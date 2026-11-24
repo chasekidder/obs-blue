@@ -101,7 +101,7 @@ If the key stays blue or turns orange, do not retry blindly: go to step 4. If it
 Also check the following. They come from code review and have **not** been verified against real Facebook yet:
 
 1. **Right element clicked.** Selector matching tries role elements first (buttons, links). If setup clicked the wrong `Go live` or `Streaming software` element (for example a menu entry or a heading), the recording shows it. Tighten the matching in `fb/selectors.py`.
-2. **Required title** (check after the part B run; a dry run never opens the go-live dialog). If Facebook's go-live dialog requires a title, stream-pilot fills an empty required title textbox with `Live` and logs a WARNING. Check whether this happens:
+2. **Required title** (check after the part B run; a dry run never opens the go-live dialog; with `[branding]` on, the title is set in the post details instead, see part B). If Facebook's go-live dialog requires a title, stream-pilot fills an empty required title textbox with `Live` and logs a WARNING. Check whether this happens:
    ```
    journalctl --user -u stream-pilot -b | grep -i title
    ```
@@ -182,6 +182,12 @@ If `[holding]` is on:
 1. While the key is green, OBS shows "Program: Holding" (the "Starting soon" card) above "Preview: Main Camera" (studio mode), or "Starting Soon" with the camera and a banner (banner mode). The audio mixer's Microphone meter is marked "Preview" (not on air).
 2. A camera key before Go Live changes the preview only. After Go Live, once the key is red, the chosen camera is on air and Studio Mode is off.
 3. The replay starts with a few seconds of the card (Facebook starts the live about 3 s after the press, the camera goes on air about 8 s after it).
+
+If `[branding]` is on:
+
+1. While the key is green, the producer's "Add post details" shows the title (for example "Test Group Sale – Nov 24"); after Go Live the video in the test Group has that title.
+2. The camera scenes show the watermark in the configured corner.
+3. When you end the live (steps 6 and 7), the "Outro" card is on air for `outro_s` seconds and the status key counts down before OBS stops; afterwards OBS is back on the camera scene.
 
 ### 6. End with a long-press
 

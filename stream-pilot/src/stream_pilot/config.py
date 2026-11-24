@@ -32,6 +32,7 @@ class FacebookCfg:
     group_name: str
     producer_url_template: str
     comments_url_template: str
+    live_title_template: str
 
     @property
     def producer_url(self) -> str:
@@ -101,6 +102,15 @@ class HoldingCfg:
 
 
 @dataclass(frozen=True)
+class BrandingCfg:
+    enabled: bool
+    watermark_text: str
+    watermark_corner: str
+    outro_text: str
+    outro_s: float
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -135,7 +145,7 @@ class PathsCfg:
 
 # Config sections that are feature switches: each has a boolean ``enabled``
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
-FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload", "holding")
+FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload", "holding", "branding")
 
 
 @dataclass(frozen=True)
@@ -153,6 +163,7 @@ class Config:
     recording: RecordingCfg
     upload: UploadCfg
     holding: HoldingCfg
+    branding: BrandingCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -250,6 +261,7 @@ def load_config(paths: list[Path]) -> Config:
         "recording": RecordingCfg,
         "upload": UploadCfg,
         "holding": HoldingCfg,
+        "branding": BrandingCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":

@@ -275,3 +275,17 @@ COMMENT_CONTROLS_SELECTOR = "[role='button'], [role='list']"
 COMMENT_TIME_SELECTOR = "abbr[data-utime], time[datetime]"
 COMMENT_TIME_UTIME_ATTR = "data-utime"
 COMMENT_TIME_DATETIME_ATTR = "datetime"
+
+
+# ---- Post details: the live's title (fb/producer.py set_title) ---------------
+
+# The 2026 producer's "Add post details" section opens the post composer with this
+# button; once details are saved it reads "Edit Post Details". Seen on the stream PC
+# (2026-11-24).
+POST_DETAILS_BUTTON = re.compile(
+    r"^\s*(what[’']s your live video about\?|edit post details)\s*$", re.I
+)
+# The composer ("Create post") has a "Title (optional)" textbox, a "Description"
+# textbox and a "Save" button.
+POST_TITLE_FIELD = re.compile(r"^\s*title\b", re.I)
+POST_DETAILS_SAVE = re.compile(r"^\s*save\s*$", re.I)

@@ -33,6 +33,7 @@ from .memory import MemoryGuard
 from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
+from .branding import Branding
 from .holding import Holding
 from .recording import Recording
 from .upload import Upload
@@ -84,6 +85,9 @@ class NotWiredFacebook:
         raise _not_wired()
 
     async def go_live(self, timeout_s: float) -> str:
+        raise _not_wired()
+
+    async def set_title(self, title: str) -> None:
         raise _not_wired()
 
     async def open_comments(self, live_id: str) -> None:
@@ -152,7 +156,7 @@ async def _supervised(
 
 
 def build_features(
-    cfg: Config, *, obs: SimpleObsClient, deck, camera, system: SystemCtl
+    cfg: Config, *, obs: SimpleObsClient, deck, camera, system: SystemCtl, fb: FacebookPort
 ) -> list[Feature]:
     """One object per feature switch; a feature that is off only ever runs ``restore``.
 
@@ -160,6 +164,7 @@ def build_features(
     recording writes DONE before upload copies the folder)."""
     return [
         Holding(cfg, obs=obs),
+        Branding(cfg, obs=obs, fb=fb, deck=deck),
         Recording(cfg, obs=obs, system=system),
         Upload(cfg, system=system),
     ]
@@ -194,7 +199,9 @@ def build_app(
     system = SystemCtl()
     camera = V4l2Camera()
     state_dir = cfg.paths.state_dir
-    features = build_features(cfg, obs=obs, deck=deck, camera=camera, system=system)
+    features = build_features(
+        cfg, obs=obs, deck=deck, camera=camera, system=system, fb=facebook
+    )
 
     controller = Controller(
         cfg,

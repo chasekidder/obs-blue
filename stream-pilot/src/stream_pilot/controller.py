@@ -76,6 +76,8 @@ END_TAIL_RESERVE_S = 10.0
 END_TAIL_MIN_S = 2.0
 # Caps for feature work in the end flow (within the budget above).
 END_HOOK_TIMEOUT_S = 12.0
+# The outro card (branding) before StopStream: its longest allowed outro_s plus a margin.
+END_OUTRO_CAP_S = 17.0
 # Upper bound for one capture re-attach (it may reconnect Chromium and reopen the
 # comments popout); it runs in its own task, so it never blocks handle().
 REATTACH_TIMEOUT_S = 90.0
@@ -177,6 +179,7 @@ class Controller:
         self._obs_sync: asyncio.Task | None = None
         self._obs_sync_again = False
         self._go_live_pressed_at: float | None = None
+        self._outro = False
         self._end_deadline: float | None = None  # clock() by which the end flow must be done
 
     # ------------------------------------------------------------------ public
@@ -410,6 +413,7 @@ class Controller:
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._restart)
         self._power_after_end = False
+        self._outro = self.state == State.LIVE  # not while RECONNECTING: nothing would air it
         self._end_mode = "power" if power_off else "end"
         await self._start_flow(
             lambda: self._end_flow(power_off=power_off), enter=State.ENDING
@@ -1016,6 +1020,9 @@ class Controller:
         self._end_deadline = self.clock() + END_FLOW_BUDGET_S
         stream_dir = self.stream_dir
         self._reset_reattach_backoff()
+        if self._outro:
+            self._outro = False
+            await self._end_hook("before_stop_stream", cap=END_OUTRO_CAP_S)
         # Stopping the stream is never cut short by the budget: it ends the live.
         await self._best_effort("stop_stream", self.obs.stop_stream(), END_STEP_TIMEOUT_S)
         await self._wait_stream_stopped()

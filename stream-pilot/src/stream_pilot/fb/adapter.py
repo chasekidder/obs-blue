@@ -104,6 +104,9 @@ class FacebookAdapter:
     async def go_live(self, timeout_s: float) -> str:
         return await (await self._producer_for_dashboard()).go_live(timeout_s)
 
+    async def set_title(self, title: str) -> None:
+        await (await self._producer_for_dashboard()).set_title(title)
+
     async def disconnect(self) -> None:
         """On stream-pilot's own shutdown: release the CDP connection, leave Chromium running."""
         await self._browser.disconnect()

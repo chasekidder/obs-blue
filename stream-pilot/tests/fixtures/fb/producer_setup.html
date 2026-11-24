@@ -25,7 +25,23 @@
     </div>
   </section>
 
+  <!-- the 2026 producer's "Add post details" (seen on the stream PC, 2026-11-24); ?notitle=1 removes it -->
+  <section id="post-details">
+    <h2>Add post details</h2>
+    <p id="post-title"></p>
+    <button type="button" id="details-btn">What's your live video about?</button>
+  </section>
+
   <button type="button" id="go" disabled aria-disabled="true">Go live</button>
+</div>
+
+<div id="composer" role="dialog" hidden>
+  <div role="dialog" aria-label="Create post"><h2>Create post</h2>
+    <button type="button" aria-label="Close composer dialog" onclick="$('composer').hidden = true">x</button></div>
+  <span>Taylor Example</span>
+  <label>Title (optional) <input type="text" id="post-title-box" aria-label="Title (optional)"></label>
+  <div role="textbox" contenteditable="true" aria-label="Description"><p></p></div>
+  <button type="button" id="composer-save">Save</button>
 </div>
 
 <div id="interstitial" role="dialog" aria-modal="true" aria-label="Before you go live" hidden>
@@ -47,7 +63,8 @@ const params = new URLSearchParams(location.search);
 // ?stuckswitch=1 (the persistent-key switch ignores clicks), ?advopen=1 (Advanced settings starts
 // open), ?late=<ms> (the persistent-key switch only shows <ms> after Streaming software is clicked),
 // ?stuckdialog=1 (confirm does nothing), ?disabledconfirm=1 (confirm stays disabled),
-// ?stepper=1 (an always-enabled step-tracker "Go live" button before the real one).
+// ?stepper=1 (an always-enabled step-tracker "Go live" button before the real one),
+// ?notitle=1 (no post details section). A saved title is kept in sessionStorage ('postTitle').
 if (params.has('nokey')) document.querySelector('input[aria-label="Stream key"]').closest('label').remove();
 if (params.has('noendstop')) document.querySelector('[aria-label="End live video when stream stops"]').remove();
 if (params.has('endoff')) document.querySelector('[aria-label="End live video when stream stops"]').setAttribute('aria-checked', 'false');
@@ -62,6 +79,17 @@ if (params.has('title')) {
   };
 }
 if (params.has('disabledconfirm')) $('confirm').disabled = true;
+if (params.has('notitle')) $('post-details').remove();
+$('details-btn')?.addEventListener('click', () => {
+  $('post-title-box').value = sessionStorage.getItem('postTitle') || '';
+  $('composer').hidden = false;
+});
+$('composer-save').onclick = () => {
+  sessionStorage.setItem('postTitle', $('post-title-box').value);
+  $('post-title').textContent = $('post-title-box').value;
+  $('details-btn').textContent = 'Edit Post Details';
+  $('composer').hidden = true;
+};
 if (params.has('stuckdialog')) $('confirm').onclick = () => {};
 if (params.has('stepper')) { $('stepper').hidden = false; sessionStorage.removeItem('stepperClicked'); }
 if (params.has('advopen')) {

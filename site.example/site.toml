@@ -115,3 +115,21 @@ session_id = ""
 #enabled = true
 #mode = "studio"
 #text = "Starting soon"
+
+#[branding]
+# A small text watermark (a placeholder for a logo) in a corner of the camera
+# scenes; an outro card for outro_s seconds when a live is ended (power button,
+# long press or `stream-pilot press --long`), with a countdown on the status key;
+# and the live's title from [facebook] live_title_template (below). The OBS
+# sources are created if missing and can be restyled or replaced in OBS.
+#enabled = true
+#watermark_text = "Your logo here"
+# top-left, top-right, bottom-left or bottom-right
+#watermark_corner = "top-right"
+#outro_text = "Thanks for watching!\nSee you next time"
+# Seconds, at most 15.
+#outro_s = 8
+#
+# The title goes in the [facebook] section above, if you want another one:
+#   live_title_template = "{group_name} Sale – {date:%b %-d}"
+# {group_name} is [facebook] group_name, {date} today's date (strftime codes).

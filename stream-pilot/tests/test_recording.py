@@ -236,7 +236,8 @@ def test_end_flow_budget_fits_the_power_guard():
     from stream_pilot.config import load_config
 
     cfg = load_config([])
-    stop_phase = (controller_mod.END_STEP_TIMEOUT_S  # StopStream
+    stop_phase = (controller_mod.END_OUTRO_CAP_S  # the outro card (branding)
+                  + controller_mod.END_STEP_TIMEOUT_S  # StopStream
                   + max(cfg.timeouts.stop_s, controller_mod.END_STEP_TIMEOUT_S)
                   + controller_mod.STOP_POLL_S  # waiting for OBS to stop
                   + cfg.timeouts.fb_end_wait_s)

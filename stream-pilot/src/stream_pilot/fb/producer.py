@@ -482,6 +482,24 @@ class Producer:
                 raise StepFailed("preview", detail)
             await asyncio.sleep(_POLL_S)
 
+    async def set_title(self, title: str) -> None:
+        """Post details: open the composer, type ``title`` into its title box, save."""
+        await self._step("title", lambda: self._set_title(title))
+
+    async def _set_title(self, title: str) -> None:
+        button = await self._find(
+            "title", (S.ROLE_BUTTON,), S.POST_DETAILS_BUTTON, timeout_s=self._timeout_s * 0.4
+        )
+        await button.click(timeout=5000)
+        box_rx = self._page.get_by_role(S.ROLE_TEXTBOX, name=S.POST_TITLE_FIELD)  # type: ignore[arg-type]
+        dialog = self._page.get_by_role(S.ROLE_DIALOG).filter(has=box_rx).filter(visible=True).first  # type: ignore[arg-type]
+        box = dialog.get_by_role(S.ROLE_TEXTBOX, name=S.POST_TITLE_FIELD).first  # type: ignore[arg-type]
+        await box.fill(title, timeout=5000)
+        await dialog.get_by_role(S.ROLE_BUTTON, name=S.POST_DETAILS_SAVE).first.click(timeout=5000)  # type: ignore[arg-type]
+        await box.wait_for(state="hidden", timeout=5000)
+        log.info("title: set (%d characters)", len(title))
+        await self._record("title")
+
     async def go_live(self, timeout_s: float) -> str:
         """Click Go live, clear any interstitial, wait for End live video; return the live id.
 

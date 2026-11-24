@@ -4,6 +4,9 @@ group_id = ""
 group_name = ""
 producer_url_template = "https://www.facebook.com/live/producer/?actor={actor_id}&entry_point=group&target_id={group_id}"
 comments_url_template = "https://www.facebook.com/live/producer/v2/{live_id}/dashboard/?entry_point=group"
+# The live's title, typed into the producer's post details ([branding] enabled only).
+# {group_name} and {date} (a datetime: {date:%b %-d} gives "Nov 24") are filled in.
+live_title_template = "{group_name} Sale – {date:%b %-d}"
 
 [obs]
 host = "127.0.0.1"
@@ -97,3 +100,14 @@ retention_days = 90
 enabled = false
 mode = "studio"
 text = "Starting soon"
+
+[branding]
+# A text watermark (a placeholder for a logo) in a corner of the camera scenes, an
+# outro card for outro_s seconds before the stream stops, and the live's title
+# from [facebook] live_title_template.
+enabled = false
+watermark_text = "Your logo here"
+# top-left, top-right, bottom-left or bottom-right
+watermark_corner = "top-right"
+outro_text = "Thanks for watching!\nSee you next time"
+outro_s = 8

@@ -388,6 +388,7 @@ class FakeFacebook(Gated):
         self._save_failure = Script(save_failure_raises)
         self._close = Script(close_raises)
         self._refresh_ssn = Script(refresh_ssn_raises)
+        self.set_title_raises: Exception | None = None
 
     async def connect(self) -> None:
         self.calls.append(("fb.connect",))
@@ -430,6 +431,12 @@ class FakeFacebook(Gated):
         await self._gated("go_live")
         self._go_live.raise_next()
         return self.live_id
+
+    async def set_title(self, title: str) -> None:
+        self.calls.append(("fb.set_title", title))
+        await self._gated("set_title")
+        if self.set_title_raises is not None:
+            raise self.set_title_raises
 
     async def open_comments(self, live_id: str) -> None:
         self.calls.append(("fb.open_comments", live_id))

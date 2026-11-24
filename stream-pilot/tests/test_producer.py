@@ -434,3 +434,30 @@ async def test_queries_raise_step_failed_on_a_closed_page(page, fixture_base_url
     with pytest.raises(StepFailed) as lost:
         await producer.preview_lost()
     assert lost.value.step == "preview_lost"
+
+
+# ---- post details: the live's title -------------------------------------------
+
+
+async def test_set_title_fills_the_composer_and_saves(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url)
+    await producer.set_title("Test Resale Group Sale – Nov 24")
+    assert await page.evaluate("sessionStorage.getItem('postTitle')") == "Test Resale Group Sale – Nov 24"
+    assert not await page.get_by_role("dialog").filter(visible=True).count()
+    # once saved, the button reads "Edit Post Details": a second setup still finds it
+    await producer.set_title("Second title")
+    assert await page.evaluate("sessionStorage.getItem('postTitle')") == "Second title"
+
+
+async def test_set_title_does_not_touch_the_stream_key_or_go_live(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url)
+    await producer.set_title("x")
+    assert await page.get_by_role("textbox", name="Stream key").count() == 1
+    assert await page.get_by_role("button", name="Go live").last.is_disabled()
+
+
+async def test_set_title_without_post_details_fails_as_a_step(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url, "?notitle=1")
+    with pytest.raises(StepFailed) as ei:
+        await producer.set_title("x")
+    assert ei.value.step == "title"
