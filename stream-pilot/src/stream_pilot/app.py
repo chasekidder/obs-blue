@@ -26,7 +26,7 @@ from .browser import CdpBrowser
 from .config import Config
 from .controller import Controller
 from .deck import StreamDeckAdapter
-from .events import RetryRequested, Tick
+from .events import DeckPress, RetryRequested, Tick
 from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .memory import MemoryGuard
 from .obs import SimpleObsClient
@@ -243,6 +243,8 @@ async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) ->
             signal.SIGUSR1, lambda: controller.sink(RetryRequested())
         )
         installed.append(signal.SIGUSR1)
+        loop.add_signal_handler(signal.SIGUSR2, lambda: controller.sink(DeckPress(0)))
+        installed.append(signal.SIGUSR2)
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, on_stop_signal, sig.name)
             installed.append(sig)

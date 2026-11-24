@@ -97,6 +97,16 @@ def cmd_retry(_args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_press(_args: argparse.Namespace) -> int:
+    try:
+        return _run_command(
+            ["systemctl", "--user", "kill", "-s", "SIGUSR2", "stream-pilot.service"]
+        )
+    except OSError as exc:
+        print(f"press failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     # Run by greenboot: any failure here (even a config error) must be a
     # clean "unhealthy" exit code rather than a traceback.
@@ -185,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
         "run": (cmd_run, "run the controller daemon"),
         "status": (cmd_status, "print the current status"),
         "retry": (cmd_retry, "ask the running controller to retry"),
+        "press": (
+            cmd_press,
+            "short-press the status key (goes live when the key shows GO LIVE)",
+        ),
         "health": (cmd_health, "wait for the system to be healthy"),
         "seed-obs": (cmd_seed_obs, "seed the OBS configuration"),
         "chromium-prep": (cmd_chromium_prep, "clear Chromium crash flags"),

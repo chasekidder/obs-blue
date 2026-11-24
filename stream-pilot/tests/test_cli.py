@@ -260,6 +260,28 @@ def test_retry_cli_sends_sigusr1_via_injected_runner(home, monkeypatch):
                       "stream-pilot.service"]]
 
 
+def test_press_cli_sends_sigusr2_via_injected_runner(home, monkeypatch):
+    calls = []
+
+    def fake_runner(argv):
+        calls.append(argv)
+        return 0
+
+    monkeypatch.setattr(cli, "_run_command", fake_runner)
+    assert main(["press"]) == 0
+    assert calls == [["systemctl", "--user", "kill", "-s", "SIGUSR2",
+                      "stream-pilot.service"]]
+
+
+def test_press_cli_missing_systemctl_exits_1(home, monkeypatch, capsys):
+    def boom(argv):
+        raise FileNotFoundError("systemctl")
+
+    monkeypatch.setattr(cli, "_run_command", boom)
+    assert main(["press"]) == 1
+    assert "systemctl" in capsys.readouterr().err
+
+
 def test_retry_cli_propagates_exit_code(home, monkeypatch):
     monkeypatch.setattr(cli, "_run_command", lambda argv: 5)
     assert main(["retry"]) == 5

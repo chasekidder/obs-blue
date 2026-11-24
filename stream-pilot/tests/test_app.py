@@ -16,7 +16,7 @@ from stream_pilot import app
 from stream_pilot.browser import CdpBrowser
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
-from stream_pilot.events import RetryRequested, Tick
+from stream_pilot.events import DeckPress, RetryRequested, Tick
 from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
 from stream_pilot.persist import StateStore, StatusWriter
 from stream_pilot.ports import StepFailed
@@ -463,7 +463,10 @@ async def test_not_wired_capture():
 
 @pytest.fixture
 def restore_signals():
-    saved = {s: signal.getsignal(s) for s in (signal.SIGUSR1, signal.SIGTERM, signal.SIGINT)}
+    saved = {
+        s: signal.getsignal(s)
+        for s in (signal.SIGUSR1, signal.SIGUSR2, signal.SIGTERM, signal.SIGINT)
+    }
     yield
     for s, h in saved.items():
         signal.signal(s, h)
@@ -541,6 +544,18 @@ async def test_run_app_sigusr1_enqueues_retry_and_sigterm_exits_zero(
         assert await asyncio.wait_for(task, 5) == 0
     assert controller.cancelled
     assert build.dry_run is True
+
+
+async def test_run_app_sigusr2_enqueues_a_status_key_press(cfg, monkeypatch, restore_signals):
+    controller = FakeController()
+    patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller):
+        os.kill(os.getpid(), signal.SIGUSR2)
+        for _ in range(200):
+            if controller.events:
+                break
+            await asyncio.sleep(0.01)
+        assert controller.events == [DeckPress(0)]
 
 
 async def test_run_app_passes_record_dir_to_build_app(cfg, monkeypatch, restore_signals, tmp_path):
