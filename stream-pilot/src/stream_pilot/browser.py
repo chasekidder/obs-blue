@@ -50,6 +50,7 @@ SSN_STALLED_SUMMARY = "Social Stream background stopped"
 
 CLOSE_TIMEOUT_S = 10.0  # bound for Browser.close + stopping Playwright
 CONNECT_TIMEOUT_S = 30.0
+PROBE_TIMEOUT_S = 5.0  # bound for each step of the alive() check
 _APP_FALLBACK_WAIT_S = 10.0  # how long a CDP-created window gets to show up
 _POLL_S = 0.2
 _IGNORED_SCHEMES = ("chrome-extension://", "devtools://")
@@ -199,6 +200,19 @@ class CdpBrowser:
         except Exception:
             return False
 
+    async def alive(self) -> bool:
+        """Connected and answering: Playwright's ``is_connected()`` stays True after
+        its node driver died, while every call fails with TargetClosedError."""
+        if not self.is_connected:
+            return False
+        try:
+            session = await asyncio.wait_for(self._browser.new_browser_cdp_session(), PROBE_TIMEOUT_S)
+            await asyncio.wait_for(session.detach(), PROBE_TIMEOUT_S)
+            return True
+        except Exception as exc:  # CancelledError propagates
+            log.warning("CDP connection is not answering (%r); reconnecting", exc)
+            return False
+
     @property
     def context(self) -> "BrowserContext":
         if not self.is_connected or self._context is None:
@@ -211,7 +225,7 @@ class CdpBrowser:
     async def connect(self) -> None:
         """Attach to Chromium over CDP (no-op when already connected; reconnects after a drop)."""
         async with self._connect_lock:
-            if self.is_connected:
+            if await self.alive():
                 return
             await self._stop_playwright()
             from playwright.async_api import async_playwright  # lazy: only in the image

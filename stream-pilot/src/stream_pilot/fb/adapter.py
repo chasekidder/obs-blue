@@ -49,7 +49,7 @@ class FacebookAdapter:
 
     async def _ensure_connected(self) -> None:
         """Reconnect after Chromium restarted (``connect`` is idempotent and serialized)."""
-        if not self._browser.is_connected:
+        if not await self._browser.alive():
             # Shielded: callers run under short bounds (the controller's 5 s preview_lost
             # check); the reconnect must still finish in the background and not restart.
             await asyncio.shield(self._browser.connect())
@@ -155,7 +155,7 @@ class CaptureAdapter:
 
     async def start(self, live_id: str, stream_dir: Path) -> None:
         gen = self._gen
-        if not self._browser.is_connected:
+        if not await self._browser.alive():
             await self._browser.connect()
         self._check_gen(gen)
         context = self._browser.context

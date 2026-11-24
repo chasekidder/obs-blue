@@ -99,11 +99,15 @@ class FakeBrowser:
         self.send_raises: dict[str, Exception] = {}
         # CDP Target.getTargets: unlike context.pages, it lists chrome-extension:// tabs
         self.targets: list[dict] = []
+        # Playwright's driver died: is_connected() stays True, every call fails.
+        self.driver_dead = False
 
     def is_connected(self) -> bool:
         return self.connected
 
     async def new_browser_cdp_session(self) -> FakeSession:
+        if self.driver_dead:
+            raise RuntimeError("Target page, context or browser has been closed")
         s = FakeSession(self)
         self.sessions.append(s)
         return s
@@ -297,6 +301,29 @@ async def test_unconnected_browser_raises_clear_error(cfg):
     with pytest.raises(BrowserNotConnected):
         await b.find_page("http://x.test/")
     assert isinstance(BrowserNotConnected("x"), RuntimeError)
+
+
+async def test_alive_needs_a_working_driver(cfg):
+    b, _, fb = make_browser(cfg)
+    assert await b.alive()
+    fb.driver_dead = True
+    assert b.is_connected  # Playwright still says connected
+    assert not await b.alive()
+    fb.driver_dead, fb.connected = False, False
+    assert not await b.alive()
+
+
+async def test_connect_rebuilds_playwright_when_its_driver_died(cfg, fake_playwright):
+    first = _FakePw(browser=FakeBrowser(FakeContext()))
+    fake_playwright["pw"] = first
+    b = CdpBrowser(cfg.cdp)
+    await b.connect()
+    first.browser.driver_dead = True
+    second = fake_playwright["pw"] = _FakePw(browser=FakeBrowser(FakeContext()))
+    await b.connect()
+    assert first.stop_called
+    assert await b.alive()
+    assert b.context is second.browser.contexts[0]
 
 
 async def test_disconnected_browser_counts_as_not_connected(cfg):
@@ -674,6 +701,7 @@ class FakeCdp:
     def __init__(self, cfg, *, connected: bool = True):
         self.cfg = cfg
         self.connected = connected
+        self.driver_dead = False
         self.calls: list[tuple] = []
         self.context = object()
         self.pages: list[FakePage] = []
@@ -687,11 +715,15 @@ class FakeCdp:
     def is_connected(self) -> bool:
         return self.connected
 
+    async def alive(self) -> bool:
+        return self.connected and not self.driver_dead
+
     async def connect(self) -> None:
         self.calls.append(("connect",))
         if self.connect_raises is not None:
             raise self.connect_raises
         self.connected = True
+        self.driver_dead = False
 
     async def dashboard_page(self):
         if not self.connected:
@@ -786,6 +818,14 @@ async def test_facebook_adapter_reconnects_when_the_browser_is_disconnected(cfg,
         assert cdp.calls == [("connect",)], call
         await getattr(fb, call)(*args)
         assert cdp.calls == [("connect",)], call  # connected now: no second connect
+
+
+async def test_facebook_adapter_reconnects_when_playwright_driver_died(cfg):
+    cdp = FakeCdp(cfg)
+    cdp.driver_dead = True
+    fb = FacebookAdapter(cfg, cdp)
+    await fb.refresh_ssn()
+    assert cdp.calls == [("connect",), ("refresh_ssn_background",)]
 
 
 async def test_facebook_adapter_does_not_connect_when_already_connected(cfg):
@@ -1125,8 +1165,11 @@ async def test_capture_ssn_task_restarted_if_it_died(cfg, tmp_path, fakes, monke
 
 
 class _FakePw:
-    def __init__(self, *, connect_exc=None, connect_hangs=False, stop_hangs=False):
+    def __init__(self, *, connect_exc=None, connect_hangs=False, stop_hangs=False, browser=None):
         self.connect_exc, self.connect_hangs, self.stop_hangs = connect_exc, connect_hangs, stop_hangs
+        self.browser = browser
+        if browser is not None:
+            browser.contexts = [browser.context]
         self.stop_called = False
         outer = self
 
@@ -1134,6 +1177,8 @@ class _FakePw:
             async def connect_over_cdp(self, url):
                 if outer.connect_hangs:
                     await asyncio.sleep(30)
+                if outer.browser is not None:
+                    return outer.browser
                 raise outer.connect_exc
 
         self.chromium = Chromium()
