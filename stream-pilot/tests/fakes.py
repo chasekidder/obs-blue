@@ -98,6 +98,9 @@ class FakeObs(Gated):
 
     async def set_stream_target(self, target: StreamTarget) -> None:
         self.calls.append(("obs.set_stream_target", target))
+        if self.active:
+            # Real OBS: "500 You cannot change stream service settings while streaming."
+            raise StepFailed("obs", "SetStreamServiceSettings: 500 streaming")
 
     async def start_stream(self) -> None:
         self.calls.append(("obs.start_stream",))

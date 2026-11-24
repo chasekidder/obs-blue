@@ -222,8 +222,8 @@ async def test_happy_path_reaches_ready_in_order(make):
         ("fb.refresh_ssn",),
         ("fb.logged_in",),
         ("fb.setup_live",),
-        ("obs.set_stream_target", rig.fb.target),
         ("obs.stream_active",),
+        ("obs.set_stream_target", rig.fb.target),
         ("obs.start_stream",),
         ("fb.wait_preview_ready", rig.cfg.timeouts.preview_s),
     ]
@@ -407,8 +407,8 @@ async def test_setup_stops_already_active_obs_stream_first(make):
     await rig.settle()
     assert rig.c.state == State.READY
     names = rig.names(rig.obs)
-    assert names.index("obs.set_stream_target") < names.index("obs.stop_stream")
-    assert names.index("obs.stop_stream") < names.index("obs.start_stream")
+    assert names.index("obs.stop_stream") < names.index("obs.set_stream_target")
+    assert names.index("obs.set_stream_target") < names.index("obs.start_stream")
 
 
 # ---------------------------------------------------------------- retry
@@ -1343,6 +1343,7 @@ async def test_setup_phase_refuses_stop_stream_while_live(rig):
     assert await rig.c._setup_phase() is False  # bails out; never raises/errors a live
     assert rig.c.state == State.LIVE
     assert "obs.stop_stream" not in rig.names(rig.obs)
+    assert "obs.set_stream_target" not in rig.names(rig.obs)
     assert "obs.start_stream" not in rig.names(rig.obs)
 
 

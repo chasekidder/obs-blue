@@ -669,15 +669,16 @@ class Controller:
                 return False
             try:
                 target = await self.fb.setup_live()
-                await self.obs.set_stream_target(target)
                 if await self.obs.stream_active():
                     # SETUP: no live exists (the live only starts with go-live),
                     # so replacing the pre-roll stream is safe. Local guard: never
                     # stop the stream if we somehow are in a live state.
                     if self._setup_blocked_by_live():
                         return False  # never touch a live's stream (nor ERROR it)
+                    # OBS refuses SetStreamServiceSettings while streaming.
                     await self.obs.stop_stream()
                     await self._wait_stream_stopped()
+                await self.obs.set_stream_target(target)
                 await self.obs.start_stream()
                 await self.fb.wait_preview_ready(t.preview_s)
                 return True
