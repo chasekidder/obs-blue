@@ -461,3 +461,11 @@ async def test_set_title_without_post_details_fails_as_a_step(page, fixture_base
     with pytest.raises(StepFailed) as ei:
         await producer.set_title("x")
     assert ei.value.step == "title"
+
+
+async def test_a_failed_title_closes_the_composer(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url, "?nosave=1")
+    with pytest.raises(StepFailed) as ei:
+        await producer.set_title("x")
+    assert ei.value.step == "title"
+    assert not await page.locator("#composer").is_visible()

@@ -289,3 +289,5 @@ POST_DETAILS_BUTTON = re.compile(
 # textbox and a "Save" button.
 POST_TITLE_FIELD = re.compile(r"^\s*title\b", re.I)
 POST_DETAILS_SAVE = re.compile(r"^\s*save\s*$", re.I)
+# Its close button (used when filling the title failed, so it cannot cover Go live).
+POST_COMPOSER_CLOSE = re.compile(r"^\s*close composer dialog\s*$", re.I)

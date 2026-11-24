@@ -483,8 +483,28 @@ class Producer:
             await asyncio.sleep(_POLL_S)
 
     async def set_title(self, title: str) -> None:
-        """Post details: open the composer, type ``title`` into its title box, save."""
-        await self._step("title", lambda: self._set_title(title))
+        """Post details: open the composer, type ``title`` into its title box, save.
+
+        On failure the composer is closed, so it cannot cover Go live."""
+        try:
+            await self._step("title", lambda: self._set_title(title))
+        except BaseException:
+            try:
+                await asyncio.shield(self._close_composer())
+            except Exception:
+                pass
+            raise
+
+    async def _close_composer(self) -> None:
+        box = self._page.get_by_role(S.ROLE_TEXTBOX, name=S.POST_TITLE_FIELD).filter(visible=True)  # type: ignore[arg-type]
+        if not await box.count():
+            return
+        close = self._page.get_by_role(S.ROLE_BUTTON, name=S.POST_COMPOSER_CLOSE).filter(visible=True)  # type: ignore[arg-type]
+        if await close.count():
+            await close.first.click(timeout=3000)
+        else:
+            await self._page.keyboard.press("Escape")
+        log.warning("title: not set; the post composer was closed")
 
     async def _set_title(self, title: str) -> None:
         button = await self._find(

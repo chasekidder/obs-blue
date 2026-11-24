@@ -64,7 +64,7 @@ const params = new URLSearchParams(location.search);
 // open), ?late=<ms> (the persistent-key switch only shows <ms> after Streaming software is clicked),
 // ?stuckdialog=1 (confirm does nothing), ?disabledconfirm=1 (confirm stays disabled),
 // ?stepper=1 (an always-enabled step-tracker "Go live" button before the real one),
-// ?notitle=1 (no post details section). A saved title is kept in sessionStorage ('postTitle').
+// ?notitle=1 (no post details section), ?nosave=1 (the composer has no Save button). A saved title is kept in sessionStorage ('postTitle').
 if (params.has('nokey')) document.querySelector('input[aria-label="Stream key"]').closest('label').remove();
 if (params.has('noendstop')) document.querySelector('[aria-label="End live video when stream stops"]').remove();
 if (params.has('endoff')) document.querySelector('[aria-label="End live video when stream stops"]').setAttribute('aria-checked', 'false');
@@ -80,6 +80,7 @@ if (params.has('title')) {
 }
 if (params.has('disabledconfirm')) $('confirm').disabled = true;
 if (params.has('notitle')) $('post-details').remove();
+if (params.has('nosave')) $('composer-save').remove();
 $('details-btn')?.addEventListener('click', () => {
   $('post-title-box').value = sessionStorage.getItem('postTitle') || '';
   $('composer').hidden = false;

@@ -22,26 +22,26 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from .branding import Branding
 from .browser import CdpBrowser
+from .camera_features import AudioFilters, WbFreeze
 from .config import Config
 from .controller import Controller
 from .deck import StreamDeckAdapter
+from .deck_warnings import DeckWarnings
 from .events import DeckPress, ObsConnected, RetryRequested, Tick
 from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .features import Feature, describe
+from .holding import Holding
 from .memory import MemoryGuard
 from .obs import EVENTS_ALL, EVENTS_INPUT_VOLUME_METERS, SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
-from .branding import Branding
-from .camera_features import AudioFilters, WbFreeze
-from .deck_warnings import DeckWarnings
-from .holding import Holding
-from .recording import Recording
-from .upload import Upload
 from .power import PowerKeyListener
+from .recording import Recording
 from .ssn_watch import SsnStallWatcher
 from .system import SystemCtl, V4l2Camera
+from .upload import Upload
 
 log = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ def build_features(
 ) -> list[Feature]:
     """One object per feature switch; a feature that is off only ever runs ``restore``.
 
-    Order matters for hooks that several features have (e.g. ``stream_closed``:
+    Order matters for hooks that several features have (e.g. ``stream_done``:
     recording writes DONE before upload copies the folder)."""
     return [
         Holding(cfg, obs=obs),
