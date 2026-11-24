@@ -1,0 +1,9 @@
+[Unit]
+Description=stream-pilot: copy the stream folders about every minute
+# Not enabled in the image: stream-pilot starts it at boot when [upload] enabled
+# is true (and stops it when false), so the first run is the boot's catch-up.
+
+[Timer]
+OnActiveSec=10s
+OnUnitInactiveSec=60s
+AccuracySec=5s

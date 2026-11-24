@@ -34,6 +34,7 @@ from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
 from .recording import Recording
+from .upload import Upload
 from .power import PowerKeyListener
 from .ssn_watch import SsnStallWatcher
 from .system import SystemCtl, V4l2Camera
@@ -158,6 +159,7 @@ def build_features(
     recording writes DONE before upload copies the folder)."""
     return [
         Recording(cfg, obs=obs, system=system),
+        Upload(cfg, system=system),
     ]
 
 

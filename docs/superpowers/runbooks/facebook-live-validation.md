@@ -171,6 +171,12 @@ If `[recording]` is on in `site.toml` (see README, Optional features), also chec
 
 After the end (steps 6 and 7), the recorder unit is gone, the manifest ends with a `session_end` line, `stream.json` has `ended_at` and `clock_at_end`, and the folder has a `DONE` file.
 
+If `[upload]` is on as well:
+
+1. `systemctl --user list-timers stream-pilot-upload.timer` shows the timer, and `journalctl --user -u stream-pilot-upload -f` a run about every minute without `rsync exited` warnings.
+2. On the server, during the live, `<target>/<stream folder>/audio/` fills up with finished clips and `<target>/_status/status.json` is rewritten every minute.
+3. After the end, the server's copy has `journal.txt` and `DONE`, and the PC's folder has a `.uploaded` marker. If the server was unreachable at the end, the next boot (or the next timer run) finishes the copy.
+
 ### 6. End with a long-press
 
 1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.

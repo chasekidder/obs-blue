@@ -110,6 +110,16 @@ grep -qx "ExecStart=/usr/bin/stream-pilot record %f" "$rec"
 grep -qx "KillSignal=SIGINT" "$rec"
 grep -qx "KillMode=mixed" "$rec"
 stream-pilot record --help > /dev/null
+test -f "$units/stream-pilot-upload.timer"
+grep -qx "ExecStart=/usr/bin/stream-pilot upload" "$units/stream-pilot-upload.service"
+grep -qx "IOSchedulingClass=idle" "$units/stream-pilot-upload.service"
+stream-pilot upload --help > /dev/null
+stream-pilot upload-key --help > /dev/null
+out=$(systemd-analyze verify --user "$units/stream-pilot-upload.service" "$units/stream-pilot-upload.timer" 2>&1 || true)
+if grep -E "stream-pilot-upload\.(service|timer)" <<< "$out" | grep -iE "unknown|invalid|bad|error|failed to parse"; then
+  echo "upload unit syntax problem" >&2
+  exit 1
+fi
 test -f /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
 grep -q "ManagedOOMMemoryPressure=auto" /usr/lib/systemd/user/slice.d/90-stream-pilot-oomd.conf
 '

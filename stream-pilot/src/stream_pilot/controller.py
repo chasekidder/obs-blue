@@ -210,6 +210,7 @@ class Controller:
         self._show(3, _FACE_RETRY)
         self._show(4, _FACE_SPARE)
         self._spawn_feature_task(self._restore_disabled_features())
+        self._spawn_feature_task(self._feature_hook("started"))
 
         saved = None
         try:
@@ -1010,7 +1011,13 @@ class Controller:
         await self._bounded_step("capture.stop", self.capture.stop())
         self._write_report()
         if stream_dir is not None:
+            # stream_closed writes the folder's last files, stream_done marks it DONE
+            # and copies it off (upload: at most final_timeout_s).
             await self._end_hook("stream_closed", stream_dir)
+            await self._end_hook(
+                "stream_done", stream_dir,
+                cap=max(END_HOOK_TIMEOUT_S, self.cfg.upload.final_timeout_s + 2),
+            )
 
         # Branch point (synchronous with the flag check, so a PowerPress either
         # sets the flag before it or is handled as a plain shutdown after it).

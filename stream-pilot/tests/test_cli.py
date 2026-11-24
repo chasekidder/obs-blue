@@ -377,3 +377,54 @@ def test_run_cli_config_error_exits_1(home, monkeypatch, caplog):
     monkeypatch.setattr(cli, "load_config", boom)
     assert main(["run"]) == 1
     assert "bad toml" in caplog.text
+
+
+# ---- upload key and upload --------------------------------------------------
+
+needs_keygen = pytest.mark.skipif(
+    not any(os.access(os.path.join(p, "ssh-keygen"), os.X_OK)
+            for p in os.environ.get("PATH", "").split(os.pathsep)),
+    reason="needs ssh-keygen",
+)
+
+
+@needs_keygen
+def test_seed_obs_creates_the_upload_key_once(home, monkeypatch):
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_defaults(home))
+    assert main(["seed-obs"]) == 0
+    key = home / ".config/stream-pilot/upload_ed25519"
+    assert stat.S_IMODE(key.stat().st_mode) == 0o600
+    pub = key.with_suffix(".pub").read_text()
+    assert main(["seed-obs"]) == 0
+    assert key.with_suffix(".pub").read_text() == pub
+
+
+def test_seed_obs_does_not_fail_when_the_key_cannot_be_made(home, monkeypatch, caplog):
+    from stream_pilot import upload
+
+    monkeypatch.setattr(cli, "OBS_DEFAULTS_DIR", make_defaults(home))
+
+    def broken(*a, **k):
+        raise FileNotFoundError("ssh-keygen")
+
+    monkeypatch.setattr(upload, "ensure_key", broken)
+    assert main(["seed-obs"]) == 0
+    assert "cannot create the upload SSH key" in caplog.text
+
+
+@needs_keygen
+def test_upload_key_prints_the_key_and_a_restricted_line(home, capsys):
+    site = home / ".config/stream-pilot/site.toml"
+    site.parent.mkdir(parents=True)
+    site.write_text('[upload]\ntarget = "pc@home.example:inbox"\n')
+    assert main(["upload-key"]) == 0
+    out = capsys.readouterr().out
+    pub = (home / ".config/stream-pilot/upload_ed25519.pub").read_text().strip()
+    assert out.splitlines()[0] == pub
+    assert f'restrict,command="rrsync -wo /srv/stream-pc/inbox" {pub}' in out
+    assert "ssh-keyscan -t ed25519 home.example" in out
+
+
+def test_upload_does_nothing_while_the_switch_is_off(home, capsys):
+    assert main(["upload"]) == 0
+    assert "enabled is false" in capsys.readouterr().out

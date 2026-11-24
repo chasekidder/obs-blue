@@ -101,6 +101,8 @@ class Recording(Feature):
 
     async def stream_closed(self, stream_dir: Path) -> None:
         stream_meta.update(stream_dir, clock_at_end=await stream_meta.clock_info(self._exec))
+
+    async def stream_done(self, stream_dir: Path) -> None:
         stream_meta.write_done(stream_dir, self._clock())
 
     async def _preroll_started_at(self) -> float | None:

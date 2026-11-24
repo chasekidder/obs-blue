@@ -76,6 +76,11 @@ For the full test-Group walkthrough (screenshot recording, a complete test live,
 Extra features each have their own section in `~/.config/stream-pilot/site.toml` with an `enabled` switch. They all ship **off**, and off means the PC behaves exactly as without the feature. `site.example/site.toml` lists every switch with its options, commented out. To turn one on, copy its section into `site.toml`, set `enabled = true`, and restart the controller (`systemctl --user restart stream-pilot`); switches are only read at startup. `stream-pilot status` lists each feature as `on` or `off`.
 
 - [ ] **Recording (`[recording]`, optional):** records the microphone while live into `~/streams/<stream>/audio/` (30 s Ogg Opus clips listed in `audio/manifest.jsonl`) and writes `stream.json` and, last, `DONE` into the stream folder. Before turning it on, check that `[audio] mic_device` is the microphone (`pactl list short sources`); during a test live, `systemctl --user list-units 'stream-pilot-recorder@*'` shows the recorder running.
+- [ ] **Upload (`[upload]`, optional):** copies the stream folders off the PC with rsync over SSH.
+  1. On the PC: `stream-pilot upload-key` prints the PC's public key (created on first boot in `~/.config/stream-pilot/upload_ed25519`) and a suggested `authorized_keys` line.
+  2. On the server: create a receiving account and an inbox directory, install `rrsync` (it comes with rsync), and add the printed line to the account's `~/.ssh/authorized_keys`, with your inbox directory in it. `restrict` plus `rrsync -wo` means the key can only write into that directory.
+  3. In `site.toml`: `[upload] enabled = true`, `target = "<account>@<server>:<path inside the inbox>"`, and `host_key` from `ssh-keyscan -t ed25519 <server>` (the `ssh-ed25519 AAAA...` part). Restart the controller.
+  4. Check: `journalctl --user -u stream-pilot-upload` shows a run about every minute, and `_status/status.json` appears on the server.
 
 Useful afterwards:
 

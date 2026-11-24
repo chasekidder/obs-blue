@@ -76,3 +76,29 @@ session_id = ""
 #clip_s = 30
 # Estimate of how far Facebook's viewers are behind the room, in seconds.
 #fb_delay_s = 15
+
+#[upload]
+# Copies the stream folders (comments, report, recording, stream.json, a journal
+# of the stream), status.json and new failure snapshots to another machine with
+# rsync over SSH, about every minute, at low priority; once more right after a
+# stream ends (before power-off); and catches up on every boot. Set it up with
+# `stream-pilot upload-key`, which prints the key and a restricted
+# authorized_keys line (rrsync, write-only, one inbox directory) for the server.
+#enabled = true
+# user@host:path. With rrsync, path is relative to rrsync's directory.
+#target = "streampc@home.example:inbox"
+# The server's SSH host key, pinned (no prompt, nothing else trusted). Get it with
+#   ssh-keyscan -t ed25519 home.example
+# and copy the "ssh-ed25519 AAAA..." part.
+#host_key = "ssh-ed25519 AAAA..."
+#port = 22
+# Upload limit in kilobits per second: the uplink is shared with the live stream.
+#bwlimit_kbps = 200
+# Seconds without progress before a copy gives up; SSH connect timeout.
+#timeout_s = 60
+#connect_timeout_s = 10
+# The copy right after a stream ends gives up after this many seconds (the next
+# boot finishes it).
+#final_timeout_s = 30
+# Delete a local stream folder once it is fully copied and older than this.
+#retention_days = 90

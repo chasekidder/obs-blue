@@ -1,0 +1,12 @@
+[Unit]
+Description=stream-pilot: copy the stream folders to the upload target
+# Started by stream-pilot-upload.timer, which stream-pilot starts only while
+# [upload] enabled is true. The uplink is shared with the live stream.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/stream-pilot upload
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=idle
+MemoryHigh=256M

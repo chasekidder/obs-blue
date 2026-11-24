@@ -69,3 +69,22 @@ fb_delay_s = 15
 # Whether Facebook's replay of a live starts with the pre-roll before Go live
 # (measured on the stream PC; see docs/superpowers/notes/2026-11-24-hardware-checks.md).
 replay_includes_preroll = false
+
+[upload]
+# Copies the stream folders, status.json and failure snapshots to another
+# machine with rsync over SSH (stream-pilot-upload.timer, about every 60 s).
+enabled = false
+# user@host:path; with rrsync on the server, path is relative to its directory.
+target = ""
+# The server's SSH host key, pinned: "ssh-ed25519 AAAA..." (ssh-keyscan -t ed25519 <host>).
+host_key = ""
+port = 22
+# Kilobits per second: the uplink is shared with the stream.
+bwlimit_kbps = 200
+# rsync --timeout (no data for this long ends the run) and the SSH connect timeout.
+timeout_s = 60
+connect_timeout_s = 10
+# The upload at the end of a stream (before power-off) stops after this long.
+final_timeout_s = 30
+# Local stream folders are deleted once fully uploaded and older than this.
+retention_days = 90

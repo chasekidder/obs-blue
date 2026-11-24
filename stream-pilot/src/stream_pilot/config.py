@@ -81,6 +81,19 @@ class RecordingCfg:
 
 
 @dataclass(frozen=True)
+class UploadCfg:
+    enabled: bool
+    target: str
+    host_key: str
+    port: int
+    bwlimit_kbps: int
+    timeout_s: int
+    connect_timeout_s: int
+    final_timeout_s: float
+    retention_days: float
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -115,7 +128,7 @@ class PathsCfg:
 
 # Config sections that are feature switches: each has a boolean ``enabled``
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
-FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording")
+FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload")
 
 
 @dataclass(frozen=True)
@@ -131,6 +144,7 @@ class Config:
     timeouts: TimeoutsCfg
     paths: PathsCfg
     recording: RecordingCfg
+    upload: UploadCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -226,6 +240,7 @@ def load_config(paths: list[Path]) -> Config:
         "timeouts": TimeoutsCfg,
         "paths": PathsCfg,
         "recording": RecordingCfg,
+        "upload": UploadCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":

@@ -156,7 +156,18 @@ def cmd_seed_obs(args: argparse.Namespace) -> int:
         return 1
     except Exception:
         log.exception("seed-obs failed; continuing so OBS can still start")
+    _ensure_upload_key()
     return 0
+
+
+def _ensure_upload_key() -> None:
+    """First boot: the [upload] SSH key, like the websocket password (never blocks OBS)."""
+    from .upload import ensure_key
+
+    try:
+        ensure_key()
+    except Exception as exc:
+        log.warning("seed-obs: cannot create the upload SSH key: %s", exc)
 
 
 def cmd_chromium_prep(_args: argparse.Namespace) -> int:
@@ -191,6 +202,56 @@ def cmd_record(args: argparse.Namespace) -> int:
         log.exception("record: cannot load config")
         return 1
     return run_recorder(Path(args.stream_dir), cfg.audio, cfg.recording)
+
+
+def cmd_upload(_args: argparse.Namespace) -> int:
+    """stream-pilot-upload.service (user, from its timer): copy the stream folders off the PC."""
+    from .upload import Uploader, run_lock
+
+    try:
+        cfg = _load_config()
+    except Exception:
+        log.exception("upload: cannot load config")
+        return 1
+    if not cfg.upload.enabled:
+        print("upload: [upload] enabled is false; nothing to do")
+        return 0
+    with run_lock(cfg.paths.state_dir) as locked:
+        if not locked:
+            print("upload: another upload is still running")
+            return 0
+        return asyncio.run(Uploader(cfg).run_all())
+
+
+def cmd_upload_key(_args: argparse.Namespace) -> int:
+    """Print the upload SSH public key and a matching restricted authorized_keys line."""
+    from .upload import authorized_keys_line, ensure_key, parse_target
+
+    try:
+        pub = ensure_key().with_suffix(".pub").read_text().strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"upload-key: cannot create the key: {exc}", file=sys.stderr)
+        return 1
+    try:
+        target = _load_config().upload.target
+    except Exception:
+        target = ""
+    parsed = parse_target(target) if target else None
+    print(pub)
+    print()
+    print("On the server, add this line to the receiving account's ~/.ssh/authorized_keys")
+    print("(rrsync, write-only, limited to one inbox directory; adjust the directory):")
+    print()
+    print(authorized_keys_line(pub))
+    print()
+    if parsed:
+        login, host, path = parsed
+        print(f"[upload] target is {target}: with rrsync, {path!r} is relative to that directory.")
+        print(f"Pin the server's host key in site.toml: [upload] host_key = \"<output of "
+              f"ssh-keyscan -t ed25519 {host}, without the host name>\"")
+    else:
+        print('Then set [upload] target = "user@host:path" and host_key in site.toml.')
+    return 0
 
 
 def cmd_selftest_cdp(args: argparse.Namespace) -> int:
@@ -239,6 +300,15 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_record,
             "record the microphone into STREAM_DIR/audio/ until SIGINT (run by "
             "stream-pilot-recorder@.service)",
+        ),
+        "upload": (
+            cmd_upload,
+            "copy the stream folders, status and failure snapshots to [upload] target "
+            "(run by stream-pilot-upload.timer)",
+        ),
+        "upload-key": (
+            cmd_upload_key,
+            "print the upload SSH public key and a restricted authorized_keys line",
         ),
     }
     parsers = {}
