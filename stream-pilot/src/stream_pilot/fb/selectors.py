@@ -260,6 +260,8 @@ def is_popout_url(url: str) -> bool:
 COMMENTS_MODULE_HEADING_SELECTOR = "h1, h2, [role='heading']"
 COMMENTS_MODULE_HEADING_TEXT = "Comments"
 COMMENTS_MODULE_ANCHOR_SELECTOR = "[role='textbox']"
+# Hidden in the pinned module: minimizing it would collapse the list the watcher reads.
+COMMENTS_MODULE_HIDE_SELECTOR = "[aria-label='Minimize comments']"
 
 
 COMMENT_LABEL_ATTR = "aria-label"

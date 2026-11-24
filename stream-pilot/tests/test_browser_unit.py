@@ -326,6 +326,26 @@ async def test_connect_rebuilds_playwright_when_its_driver_died(cfg, fake_playwr
     assert b.context is second.browser.contexts[0]
 
 
+async def test_disconnect_stops_playwright_but_leaves_chromium_running(cfg):
+    b, _, fb = make_browser(cfg)
+    pw = b._pw
+    await b.disconnect()
+    assert pw.stopped
+    assert not b.is_connected
+    assert fb.calls == []  # no Browser.close: Chromium is its own service
+
+
+async def test_facebook_adapter_disconnect_delegates(cfg):
+    calls = []
+
+    class Cdp(FakeCdp):
+        async def disconnect(self):
+            calls.append("disconnect")
+
+    await FacebookAdapter(cfg, Cdp(cfg)).disconnect()
+    assert calls == ["disconnect"]
+
+
 async def test_disconnected_browser_counts_as_not_connected(cfg):
     b, _, fb = make_browser(cfg)
     assert b.is_connected

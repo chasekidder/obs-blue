@@ -333,6 +333,8 @@ async def test_comments_module_is_pinned_over_the_window(pw_browser, fixture_bas
                        return m && [m.id, getComputedStyle(m).position]; }"""
         )
         assert pinned == ["module", "fixed"]
+        # minimizing the module would collapse the list the watcher reads
+        assert await page.evaluate("getComputedStyle(document.getElementById('minimize')).display") == "none"
     finally:
         await context.close()
 

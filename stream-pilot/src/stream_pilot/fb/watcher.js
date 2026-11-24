@@ -48,6 +48,7 @@
     const MODULE_HEADING_SELECTOR = __MODULE_HEADING_SELECTOR__;
     const MODULE_HEADING_TEXT = __MODULE_HEADING_TEXT__;
     const MODULE_ANCHOR_SELECTOR = __MODULE_ANCHOR_SELECTOR__;
+    const MODULE_HIDE_SELECTOR = __MODULE_HIDE_SELECTOR__;
 
     if (!(String(location.href).includes(COMMENTS_MARKER) || window.__spForceWatch === true)) return;
     window.__spWatcherInstalled = true;
@@ -374,7 +375,9 @@
             + '[' + FOCUS_ATTR + ']{visibility:visible!important;position:fixed!important;inset:0!important;'
             + 'z-index:2147483647!important;width:auto!important;height:auto!important;'
             + 'max-width:none!important;max-height:none!important;margin:0!important;'
-            + 'overflow:auto!important;background:#fff!important;}';
+            + 'overflow:auto!important;background:#fff!important;}'
+            + MODULE_HIDE_SELECTOR.split(',').map((s) => '[' + FOCUS_ATTR + '] ' + s.trim()).join(',')
+            + '{display:none!important}';
           (document.head || document.documentElement).appendChild(style);
         }
       } catch (e) { /* ignore */ }

@@ -280,6 +280,11 @@ class CdpBrowser:
             except Exception as exc:
                 log.debug("stopping playwright failed: %r", exc)
 
+    async def disconnect(self) -> None:
+        """Drop the CDP connection and stop Playwright's driver; Chromium keeps running. Never raises."""
+        await self._stop_playwright()
+        self.popout_pages = []
+
     async def close_browser(self) -> None:
         """Ask Chromium to quit (``Browser.close``), then drop Playwright. Never raises."""
         browser = self._browser

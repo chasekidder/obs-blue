@@ -546,6 +546,40 @@ async def test_run_app_sigusr1_enqueues_retry_and_sigterm_exits_zero(
     assert build.dry_run is True
 
 
+def test_shutdown_exception_handler_drops_only_the_playwright_driver_close(caplog):
+    loop = asyncio.new_event_loop()
+    try:
+        with caplog.at_level(logging.DEBUG, logger="asyncio"):
+            app._quiet_driver_close(loop, {
+                "message": "Future exception was never retrieved",
+                "exception": Exception("Connection closed while reading from the driver"),
+            })
+            assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+            app._quiet_driver_close(loop, {
+                "message": "Future exception was never retrieved",
+                "exception": RuntimeError("something else"),
+            })
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR]
+    finally:
+        loop.close()
+
+
+async def test_run_app_disconnects_from_chromium_on_sigterm(cfg, monkeypatch, restore_signals):
+    class Fb:
+        disconnected = False
+
+        async def disconnect(self):
+            Fb.disconnected = True
+
+    controller = FakeController()
+    controller.fb = Fb()
+    patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller) as task:
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert await asyncio.wait_for(task, 5) == 0
+    assert Fb.disconnected
+
+
 async def test_run_app_sigusr2_enqueues_a_status_key_press(cfg, monkeypatch, restore_signals):
     controller = FakeController()
     patch_build(monkeypatch, controller)

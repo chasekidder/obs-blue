@@ -266,8 +266,31 @@ async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) ->
                 aw.close()
         for sig in installed:
             loop.remove_signal_handler(sig)
+        loop.set_exception_handler(_quiet_driver_close)
         await _stop_deck(controller)
+        await _disconnect_browser(controller)
     return 1 if failures else 0
+
+
+def _quiet_driver_close(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Shutdown only: a Playwright request cancelled mid-flight (e.g. a setup step) fails
+    with this once the driver is gone, and nobody is left to retrieve it."""
+    exc = context.get("exception")
+    if exc is not None and "Connection closed while reading from the driver" in str(exc):
+        log.debug("Playwright driver closed with a request in flight (shutdown)")
+        return
+    loop.default_exception_handler(context)
+
+
+async def _disconnect_browser(controller: Controller) -> None:
+    """Stop Playwright's driver before exiting, leaving Chromium running (best effort; never raises)."""
+    disconnect = getattr(getattr(controller, "fb", None), "disconnect", None)
+    if disconnect is None:
+        return
+    try:
+        await asyncio.wait_for(disconnect(), _DECK_STOP_TIMEOUT_S)
+    except Exception:
+        log.exception("disconnecting from Chromium failed")
 
 
 async def _stop_deck(controller: Controller) -> None:
