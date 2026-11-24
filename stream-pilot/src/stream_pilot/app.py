@@ -33,6 +33,7 @@ from .memory import MemoryGuard
 from .obs import SimpleObsClient
 from .persist import StateStore, StatusWriter
 from .ports import CommentCapturePort, FacebookPort, StepFailed
+from .holding import Holding
 from .recording import Recording
 from .upload import Upload
 from .power import PowerKeyListener
@@ -158,6 +159,7 @@ def build_features(
     Order matters for hooks that several features have (e.g. ``stream_closed``:
     recording writes DONE before upload copies the folder)."""
     return [
+        Holding(cfg, obs=obs),
         Recording(cfg, obs=obs, system=system),
         Upload(cfg, system=system),
     ]

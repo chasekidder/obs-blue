@@ -81,6 +81,7 @@ Extra features each have their own section in `~/.config/stream-pilot/site.toml`
   2. On the server: create a receiving account and an inbox directory, install `rrsync` (it comes with rsync), and add the printed line to the account's `~/.ssh/authorized_keys`, with your inbox directory in it. `restrict` plus `rrsync -wo` means the key can only write into that directory.
   3. In `site.toml`: `[upload] enabled = true`, `target = "<account>@<server>:<path inside the inbox>"`, and `host_key` from `ssh-keyscan -t ed25519 <server>` (the `ssh-ed25519 AAAA...` part). Restart the controller.
   4. Check: `journalctl --user -u stream-pilot-upload` shows a run about every minute, and `_status/status.json` appears on the server.
+- [ ] **Holding scene (`[holding]`, optional):** before Go Live, OBS airs a "Starting soon" scene without the microphone (Studio Mode by default, the camera in the preview), and switches to the camera when Facebook confirms the live. With it on, the camera keys before Go Live change OBS's preview, not what is on air. Check once after turning it on: OBS shows "Program: Holding" above "Preview: Main Camera" while the key is green, and the camera is on air (Studio Mode off) once the key turns red. A replay then starts with a few seconds of the card.
 
 Useful afterwards:
 

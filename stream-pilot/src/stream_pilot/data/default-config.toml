@@ -88,3 +88,12 @@ connect_timeout_s = 10
 final_timeout_s = 30
 # Local stream folders are deleted once fully uploaded and older than this.
 retention_days = 90
+
+[holding]
+# A scene without the microphone on air before Go Live (the pre-roll), switched
+# to the camera scene when Facebook confirms the live. mode = "studio": OBS's
+# Studio Mode, camera keys change the preview; "banner": the camera picture with
+# a text banner.
+enabled = false
+mode = "studio"
+text = "Starting soon"

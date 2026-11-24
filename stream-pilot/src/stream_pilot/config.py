@@ -94,6 +94,13 @@ class UploadCfg:
 
 
 @dataclass(frozen=True)
+class HoldingCfg:
+    enabled: bool
+    mode: str
+    text: str
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -128,7 +135,7 @@ class PathsCfg:
 
 # Config sections that are feature switches: each has a boolean ``enabled``
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
-FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload")
+FEATURE_SECTIONS: tuple[str, ...] = ("ssn", "recording", "upload", "holding")
 
 
 @dataclass(frozen=True)
@@ -145,6 +152,7 @@ class Config:
     paths: PathsCfg
     recording: RecordingCfg
     upload: UploadCfg
+    holding: HoldingCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -241,6 +249,7 @@ def load_config(paths: list[Path]) -> Config:
         "paths": PathsCfg,
         "recording": RecordingCfg,
         "upload": UploadCfg,
+        "holding": HoldingCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":

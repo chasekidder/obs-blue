@@ -102,3 +102,16 @@ session_id = ""
 #final_timeout_s = 30
 # Delete a local stream folder once it is fully copied and older than this.
 #retention_days = 90
+
+#[holding]
+# Before Go Live, the pre-roll shows a holding scene without the microphone, so
+# nothing from the room goes out before the live starts. When Facebook confirms
+# the live, the camera scene (with the microphone) goes on air.
+#   mode = "studio": OBS's Studio Mode, with "Holding" (a "Starting soon" card)
+#     on air and the camera in the preview; camera keys change the preview.
+#   mode = "banner": "Starting Soon" on air: the main camera's picture with a
+#     text banner; camera keys choose the camera for when the live starts.
+# The scenes are created in OBS if missing and can be restyled there.
+#enabled = true
+#mode = "studio"
+#text = "Starting soon"

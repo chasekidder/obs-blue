@@ -328,6 +328,21 @@ class Controller:
             if not self._obs_sync_again:
                 return
 
+    async def _feature_claims(self, hook: str, *args: object) -> bool:
+        """True if an enabled feature handled ``hook(*args)`` itself (bounded, best effort)."""
+        for f in self.features:
+            fn = getattr(f, hook, None)
+            if not f.enabled or fn is None:
+                continue
+            try:
+                if await asyncio.wait_for(fn(*args), INLINE_TIMEOUT_S):
+                    return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("feature %s: %s failed (continuing): %r", f.name, hook, exc)
+        return False
+
     async def _feature_hook(
         self, hook: str, *args: object, timeout: float | None = None
     ) -> None:
@@ -793,6 +808,7 @@ class Controller:
                     log.info("waiting %.0fs before reconnecting: Facebook refuses the key "
                              "right after a stream stopped", wait)
                     await self._sleep(wait)
+                await self._feature_hook("before_preroll")
                 await self.obs.start_stream()
                 await self._wait_preview_keeping_pre_roll(t.preview_s)
                 return True
@@ -1075,8 +1091,12 @@ class Controller:
         if cfg is None:
             log.warning("no camera %r configured", cam)
             return
+        claimed = self.state not in LIVE_STATES and await self._feature_claims(
+            "select_camera", cfg.scene
+        )
         try:
-            await self._bounded("set_scene", self.obs.set_scene(cfg.scene))
+            if not claimed:
+                await self._bounded("set_scene", self.obs.set_scene(cfg.scene))
         except asyncio.CancelledError:
             raise
         except Exception:

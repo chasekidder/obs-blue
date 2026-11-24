@@ -177,6 +177,12 @@ If `[upload]` is on as well:
 2. On the server, during the live, `<target>/<stream folder>/audio/` fills up with finished clips and `<target>/_status/status.json` is rewritten every minute.
 3. After the end, the server's copy has `journal.txt` and `DONE`, and the PC's folder has a `.uploaded` marker. If the server was unreachable at the end, the next boot (or the next timer run) finishes the copy.
 
+If `[holding]` is on:
+
+1. While the key is green, OBS shows "Program: Holding" (the "Starting soon" card) above "Preview: Main Camera" (studio mode), or "Starting Soon" with the camera and a banner (banner mode). The audio mixer's Microphone meter is marked "Preview" (not on air).
+2. A camera key before Go Live changes the preview only. After Go Live, once the key is red, the chosen camera is on air and Studio Mode is off.
+3. The replay starts with a few seconds of the card (Facebook starts the live about 3 s after the press, the camera goes on air about 8 s after it).
+
 ### 6. End with a long-press
 
 1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.

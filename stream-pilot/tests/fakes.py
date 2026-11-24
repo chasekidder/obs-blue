@@ -128,6 +128,7 @@ class FakeObs(Gated):
         await self._gated("set_scene")
         self._set_scene.raise_next()
         self.scene = name
+        self.model.program = name
 
     async def current_scene(self) -> str:
         self.calls.append(("obs.current_scene",))
@@ -194,6 +195,7 @@ class ObsModel:
         self.program = program
         self.preview: str | None = None
         self.studio_mode = False
+        self.swap_pending: str | None = None
         self.stats = {"activeFps": 30.0, "renderSkippedFrames": 0, "renderTotalFrames": 0,
                       "outputSkippedFrames": 0, "outputTotalFrames": 0, "cpuUsage": 5.0}
         self.stream_status = {"outputActive": False, "outputSkippedFrames": 0,
@@ -267,6 +269,14 @@ class ObsModel:
             else:
                 items.remove(item)
             return {}
+        if rt == "GetSceneItemTransform":
+            item = next((i for i in self._scene(d["sceneName"]) if i["id"] == d["sceneItemId"]), None)
+            if item is None:
+                raise self._fail(rt, 600, "No scene item")
+            base = {"positionX": 0.0, "positionY": 0.0, "rotation": 0.0, "scaleX": 1.0,
+                    "scaleY": 1.0, "alignment": 5, "boundsType": "OBS_BOUNDS_NONE",
+                    "sourceWidth": 1920.0, "width": 1920.0}
+            return {"sceneItemTransform": {**base, **item["transform"]}}
         if rt == "GetInputSettings":
             if d["inputName"] not in self.inputs:
                 raise self._fail(rt, 600, "No input")
@@ -303,12 +313,15 @@ class ObsModel:
         if rt == "SetStudioModeEnabled":
             self.studio_mode = d["studioModeEnabled"]
             self.preview = self.program if self.studio_mode else None
+            self.swap_pending = None
             return {}
         if rt == "GetCurrentProgramScene":
             return {"currentProgramSceneName": self.program, "sceneName": self.program}
         if rt == "SetCurrentProgramScene":
             self._scene(d["sceneName"])
-            self.program = d["sceneName"]
+            old, self.program = self.program, d["sceneName"]
+            if self.studio_mode:
+                self.swap_pending = old  # OBS swaps when the transition ends (same scene too)
             return {}
         if rt == "GetCurrentPreviewScene":
             if not self.studio_mode:
@@ -319,7 +332,11 @@ class ObsModel:
                 raise self._fail(rt, 506, "Studio mode is not active")
             self._scene(d["sceneName"])
             self.preview = d["sceneName"]
+            if self.swap_pending is not None:  # the transition ends after this request
+                self.preview, self.swap_pending = self.swap_pending, None
             return {}
+        if rt == "GetCurrentSceneTransition":
+            return {"transitionName": "Fade", "transitionDuration": 300}
         if rt == "GetStats":
             return dict(self.stats)
         if rt == "GetStreamStatus":
