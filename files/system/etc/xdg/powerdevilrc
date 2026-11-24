@@ -3,6 +3,9 @@ DimDisplayWhenIdle=false
 TurnOffDisplayWhenIdle=false
 LockBeforeTurnOffDisplay=false
 
+[AC][Performance]
+PowerProfile=performance
+
 [AC][SuspendAndShutdown]
 AutoSuspendAction=0
 PowerButtonAction=0
