@@ -14,7 +14,7 @@
 # the deprecated noborder key; [General] Order replaces the legacy count/rules keys
 # (KWin 6.8 migrates those by rewriting the user's config on first load).
 [General]
-Order=1,2,3
+Order=1,2,4,3
 
 [1]
 Description=stream-pilot: OBS Studio left column
@@ -52,6 +52,25 @@ skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
+
+# The main browser window (producer setup, Facebook login) gets the same right column as
+# the comments column, so it never covers OBS: the host stages the scene in OBS before
+# going live. Once live, the comments column (always on top) covers it. Matched exactly:
+# --app windows have their own chrome-<host>__<path> class.
+[4]
+Description=stream-pilot: Chromium main window right column
+wmclass=chromium-browser
+wmclasscomplete=false
+wmclassmatch=1
+types=1
+position=1344,0
+positionrule=2
+size=576,1034
+sizerule=2
+maximizehoriz=false
+maximizehorizrule=2
+maximizevert=false
+maximizevertrule=2
 
 # Forced, not "Apply initially": RustDesk un-minimizes itself right after mapping. Its
 # connection server runs in this window's process, so the window has to exist. To change
