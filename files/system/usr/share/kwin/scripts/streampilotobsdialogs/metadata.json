@@ -1,0 +1,11 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Description": "Closes OBS's modal \"Failed to connect\" dialog: stream-pilot retries the stream itself and shows the real state on the Stream Deck",
+        "EnabledByDefault": true,
+        "Id": "streampilotobsdialogs",
+        "License": "Apache-2.0",
+        "Name": "stream-pilot: no OBS connection-failure dialogs"
+    },
+    "X-Plasma-API": "javascript"
+}

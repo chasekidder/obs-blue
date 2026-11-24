@@ -1,4 +1,5 @@
 [Plugins]
+streampilotobsdialogsEnabled=true
 blurEnabled=false
 slidingpopupsEnabled=false
 translucencyEnabled=false
