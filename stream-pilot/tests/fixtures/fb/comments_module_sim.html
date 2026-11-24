@@ -49,7 +49,7 @@ function body(text) {
 function build(entry) {
   const c = entry.c;
   const profile = `/groups/${GROUP}/user/${encodeURIComponent(c.author)}/?__tn__=R`;
-  const href = `https://www.facebook.com/groups/${GROUP}/permalink/${POST}/?` +
+  const href = `/groups/${GROUP}/permalink/${POST}/?` +
     (c.reply_to ? `comment_id=${c.reply_to}&reply_comment_id=${c.id}` : `comment_id=${c.id}`) + '&__tn__=R';
   const controls = el('ul', { role: 'list' },
     el('li', {}, el('a', { href }, AGES[entry.age].startsWith('a few') ? 'now' : '1m')),
