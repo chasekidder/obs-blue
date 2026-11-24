@@ -657,6 +657,40 @@ async def test_ready_tick_with_preview_lost_reruns_setup_from_setup(make):
     assert "obs.stop_stream" in rig.names(rig.obs)  # stale pre-roll replaced; no live exists
 
 
+async def test_pre_roll_stopping_in_ready_reruns_setup_at_once(rig):
+    # Seen on the stream PC: Facebook reset its page without any "lost" text while the
+    # key stayed green; OBS's own stop event is the immediate signal.
+    await rig.to_ready()
+    rig.obs.active = False
+    rig.clear()
+    await rig.c.handle(ObsStreamState(active=False))
+    assert rig.c.state == State.SETUP
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert "fb.setup_live" in rig.names(rig.fb)
+    assert rig.obs.active
+
+
+async def test_ready_tick_with_obs_not_streaming_reruns_setup(rig):
+    await rig.to_ready()
+    rig.obs.active = False  # the stop event was missed
+    rig.clear()
+    await rig.c.handle(Tick())
+    assert rig.c.state == State.SETUP
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.obs.active
+
+
+async def test_obs_stop_event_outside_ready_and_live_starts_nothing(rig):
+    await rig.to_ready()
+    await rig.c.handle(DeckPress(0))  # GOING_LIVE flow runs
+    rig.clear()
+    rig.c.state = State.ERROR
+    await rig.c.handle(ObsStreamState(active=False))
+    assert "fb.setup_live" not in rig.names(rig.fb)
+
+
 async def test_ready_tick_without_preview_loss_does_nothing(rig):
     await rig.to_ready()
     rig.clear()
@@ -1013,14 +1047,19 @@ async def test_obs_recovery_event_cancels_restart_loop(make):
 
 
 @pytest.mark.parametrize(
-    "event",
+    ("state", "event"),
     [
-        ObsStreamState(active=False),
-        ObsStreamState(active=True, reconnecting=True),
-        ObsStreamState(active=True),
+        (state, event)
+        for state in (State.READY, State.ENDING, State.SETUP, State.ERROR)
+        for event in (
+            ObsStreamState(active=False),
+            ObsStreamState(active=True, reconnecting=True),
+            ObsStreamState(active=True),
+        )
+        # a stop in READY re-runs setup: test_pre_roll_stopping_in_ready_reruns_setup_at_once
+        if not (state == State.READY and not event.active)
     ],
 )
-@pytest.mark.parametrize("state", [State.READY, State.ENDING, State.SETUP, State.ERROR])
 async def test_obs_events_ignored_outside_live_states(rig, state, event):
     rig.c.state = state
     await rig.c.handle(event)

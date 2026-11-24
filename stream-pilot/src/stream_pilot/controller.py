@@ -326,6 +326,9 @@ class Controller:
     async def _on_obs(self, ev: ObsStreamState) -> None:
         if not ev.active:
             self._stream_stopped_at = self.clock()
+            if self.state == State.READY:
+                await self._redo_setup("OBS's pre-roll stream stopped")
+                return
         if self.state not in LIVE_STATES:
             return
         if ev.reconnecting:
@@ -342,22 +345,35 @@ class Controller:
         self._write_status()
         if self.state == State.READY and self._flow_idle():
             try:
+                streaming = await self._bounded("stream_active", self.obs.stream_active())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.debug("stream_active poll failed: %r", exc)
+                streaming = True  # unknown: leave it to the Facebook check
+            if not streaming:
+                await self._redo_setup("OBS is not streaming the pre-roll")
+                return
+            try:
                 lost = await self._bounded("preview_lost", self.fb.preview_lost())
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("preview_lost failed: %r", exc)
                 return
-            # Re-check: the world may have moved while we awaited.
-            if lost and self.state == State.READY and self._flow_idle():
-                log.warning("facebook preview lost; re-running setup")
-                await self._start_flow(
-                    lambda: self._setup_flow("SETUP"), enter=State.SETUP
-                )
+            if lost:
+                await self._redo_setup("facebook preview lost")
         elif self.state in LIVE_STATES:
             self._maybe_reattach_capture()
             if self.state == State.LIVE:
                 await self._poll_obs_while_live()
+
+    async def _redo_setup(self, why: str) -> None:
+        """READY no longer holds (the key must not stay green): run setup again."""
+        # Re-check: the world may have moved while we awaited.
+        if self.state == State.READY and self._flow_idle():
+            log.warning("%s; re-running setup", why)
+            await self._start_flow(lambda: self._setup_flow("SETUP"), enter=State.SETUP)
 
     async def _poll_obs_while_live(self) -> None:
         try:

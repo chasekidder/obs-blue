@@ -47,6 +47,7 @@ _MAX_CONFIRM_CLICKS = 3
 _ADVANCED_GRACE_S = 1.0  # how long the switch gets to appear before Advanced settings is clicked
 _GRACE_S = 5.0  # added to go_live / wait_preview_ready timeouts for the outer bound
 _QUERY_TIMEOUT_S = 5.0  # bound for is_login_page / preview_lost
+_RECHECK_S = 1.0  # preview_lost: a disabled Go live must still be disabled this much later
 _TEXT_FALLBACK_AFTER_S = 0.5  # text locators are tried only after role locators had this long
 _CONFIRM_GONE_S = 2.0  # how long a clicked interstitial confirm gets to disappear
 
@@ -277,11 +278,24 @@ class Producer:
         return await self.is_login_page()
 
     async def preview_lost(self) -> bool:
-        """True if the preview-lost text is visible. Errors raise ``StepFailed("preview_lost")``."""
+        """True if the preview-lost text is visible, or the Go live button is no longer
+        enabled (checked twice, ``_RECHECK_S`` apart, so a flicker is not a loss).
+        Errors raise ``StepFailed("preview_lost")``."""
+
+        async def go_live_enabled() -> bool:
+            btn = await self._go_live_button()
+            if btn is None or not await btn.is_enabled(timeout=1000):
+                return False
+            return await btn.get_attribute(S.ATTR_ARIA_DISABLED, timeout=1000) != "true"
 
         async def query() -> bool:
             loc = self._page.get_by_text(S.PREVIEW_LOST_TEXT).filter(visible=True).first
-            return await loc.is_visible()
+            if await loc.is_visible():
+                return True
+            if await go_live_enabled():
+                return False
+            await asyncio.sleep(_RECHECK_S)
+            return not await go_live_enabled()
 
         return await self._bounded("preview_lost", query(), _QUERY_TIMEOUT_S, "preview check", wrap=True)
 

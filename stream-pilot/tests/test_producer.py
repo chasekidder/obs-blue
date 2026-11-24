@@ -182,11 +182,36 @@ async def test_go_live_clicks_the_real_button_not_the_step_tracker(page, fixture
 
 async def test_preview_lost_reflects_page_text(page, fixture_base_url):
     producer = await to_setup_page(page, fixture_base_url)
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
     assert await producer.preview_lost() is False
     await page.evaluate(
         "document.body.insertAdjacentHTML('beforeend', '<p>Your stream is disconnected</p>')"
     )
     assert await producer.preview_lost() is True
+
+
+async def test_preview_lost_when_go_live_turns_disabled_or_disappears(page, fixture_base_url):
+    # Seen on the stream PC: Facebook went back to "Select a video source" with Go live
+    # disabled and no "lost" text, while stream-pilot still showed GO LIVE.
+    producer = await to_setup_page(page, fixture_base_url)
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
+    await page.evaluate("document.getElementById('go').disabled = true")
+    assert await producer.preview_lost() is True
+    await page.evaluate("document.getElementById('go').remove()")
+    assert await producer.preview_lost() is True
+
+
+async def test_preview_lost_ignores_a_go_live_flicker(page, fixture_base_url):
+    producer = await to_setup_page(page, fixture_base_url)
+    await page.evaluate("window.__previewReady()")
+    await producer.wait_preview_ready(5.0)
+    await page.evaluate(
+        "const g = document.getElementById('go'); g.disabled = true;"
+        " setTimeout(() => { g.disabled = false; }, 300)"
+    )
+    assert await producer.preview_lost() is False
 
 
 async def test_go_live_confirms_interstitial_and_returns_live_id(page, fixture_base_url):
