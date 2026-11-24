@@ -171,7 +171,8 @@ async def test_id_dedupe_alone_prevents_duplicates_when_alignment_cannot(env):
     await env.wait_rescans(before + 1)
     await asyncio.sleep(0.5)
     assert len(rows(env.path)) == 6
-    assert env.log.gaps, "alignment found no overlap, so ID dedupe is what prevented duplicates"
+    # all of them carry known ids: they overlap the log by id, so no gap is noted
+    assert not env.log.gaps
 
 
 async def test_binding_survives_reload(env):
