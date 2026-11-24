@@ -34,6 +34,11 @@ _GOTO_BLANK_MIN_S = 5.0
 _CLOSE_POPOUT_S = 3.0  # bound for closing one popout page in stop()
 
 
+def comments_url(cfg: Config, live_id: str) -> str:
+    """The comments column's URL: the configured page plus stream-pilot's marker."""
+    return cfg.facebook.comments_url_template.format(live_id=live_id) + S.popout_url_fragment(live_id)
+
+
 class FacebookAdapter:
     """``FacebookPort`` on the dashboard page of the shared browser."""
 
@@ -101,8 +106,7 @@ class FacebookAdapter:
 
     async def open_comments(self, live_id: str) -> None:
         await self._ensure_connected()
-        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
-        self._comments_page = await self._browser.open_app_window(url)
+        self._comments_page = await self._browser.open_app_window(comments_url(self._cfg, live_id))
         if self._record_dir is not None:
             await record_page(self._comments_page, self._record_dir, "comments_popout")
 
@@ -224,7 +228,7 @@ class CaptureAdapter:
 
     async def _popout_page(self, live_id: str):
         fragment = S.popout_url_fragment(live_id)
-        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
+        url = comments_url(self._cfg, live_id)
         grace = min(_POPOUT_GRACE_S, self._cfg.timeouts.step_s)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + grace

@@ -44,12 +44,17 @@ def _placeholders() -> dict[str, str]:
         "__LABEL_ATTR__": js_str(selectors.COMMENT_LABEL_ATTR),
         "__LABEL_RE__": selectors.js_regex_source(selectors.COMMENT_LABEL_RE),
         "__COMMENT_ID_RE__": selectors.js_regex_source(selectors.COMMENT_ID_IN_HREF_RE),
+        "__REPLY_ID_RE__": selectors.js_regex_source(selectors.REPLY_COMMENT_ID_IN_HREF_RE),
         "__AUTHOR_LINK_SELECTOR__": js_str(selectors.COMMENT_AUTHOR_LINK_SELECTOR),
         "__PERMALINK_SELECTOR__": js_str(selectors.COMMENT_PERMALINK_SELECTOR),
+        "__CONTROLS_SELECTOR__": js_str(selectors.COMMENT_CONTROLS_SELECTOR),
         "__TIME_SELECTOR__": js_str(selectors.COMMENT_TIME_SELECTOR),
         "__TIME_UTIME_ATTR__": js_str(selectors.COMMENT_TIME_UTIME_ATTR),
         "__TIME_DATETIME_ATTR__": js_str(selectors.COMMENT_TIME_DATETIME_ATTR),
-        "__COMMENTS_PATH__": js_str(selectors.COMMENTS_PATH_MARKER),
+        "__COMMENTS_MARKER__": js_str(selectors.COMMENTS_URL_MARKER),
+        "__MODULE_HEADING_SELECTOR__": js_str(selectors.COMMENTS_MODULE_HEADING_SELECTOR),
+        "__MODULE_HEADING_TEXT__": js_str(selectors.COMMENTS_MODULE_HEADING_TEXT),
+        "__MODULE_ANCHOR_SELECTOR__": js_str(selectors.COMMENTS_MODULE_ANCHOR_SELECTOR),
     }
 
 

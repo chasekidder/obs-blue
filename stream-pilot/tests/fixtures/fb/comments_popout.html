@@ -1,8 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Comments (fixture)</title></head>
 <body>
+<div id="page-chrome">Live dashboard (fixture)</div>
+<div id="module">
 <h1>Comments</h1>
 <div id="list"></div>
+<div role="textbox" contenteditable="true" aria-label="Write a comment"></div>
+</div>
 <script>
 const KEY = 'fixture-comments';
 let comments = JSON.parse(sessionStorage.getItem(KEY) || 'null');
@@ -37,6 +41,21 @@ function build(c) {
   text.className = 'text';
   text.textContent = c.text;
   el.append(a, text);
+  // 2026 producer: an "Edit or delete" button and a list of controls follow the text
+  const edit = document.createElement('div');
+  edit.setAttribute('role', 'button');
+  edit.setAttribute('aria-label', 'Edit or delete this');
+  const controls = document.createElement('ul');
+  controls.setAttribute('role', 'list');
+  for (const label of ['Like', 'Reply', 'Pin']) {
+    const li = document.createElement('li');
+    const btn = document.createElement('div');
+    btn.setAttribute('role', 'button');
+    btn.textContent = label;
+    li.append(btn);
+    controls.append(li);
+  }
+  el.append(edit, controls);
   if (c.id) {
     const p = document.createElement('a');
     p.href = '?comment_id=' + c.id;

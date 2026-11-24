@@ -34,8 +34,8 @@ above=false
 aboverule=2
 
 [2]
-Description=stream-pilot: Facebook comments popout right column
-wmclass=chrome-www.facebook.com__live_producer_dashboard
+Description=stream-pilot: Facebook comments column (right)
+wmclass=chrome-www.facebook.com__live_producer
 wmclasscomplete=false
 wmclassmatch=2
 position=1344,0

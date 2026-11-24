@@ -160,6 +160,11 @@ def test_live_id_from_url_none(url):
         ("Comment by Jane Doe now", "Jane Doe"),
         ("Comment by Jane Doe 2 hours ago", "Jane Doe"),
         ("comment by Zoë O'Neil-Smith 1 week ago", "Zoë O'Neil-Smith"),
+        # seen on the 2026 producer's Comments module
+        ("Comment by Chase Kidder a few seconds ago", "Chase Kidder"),
+        ("Comment by Chase Kidder 3 minutes ago", "Chase Kidder"),
+        ("Comment by Jane Doe an hour ago", "Jane Doe"),
+        ("Comment by Jane Doe about an hour ago", "Jane Doe"),
     ],
 )
 def test_parse_comment_label(label, author):
@@ -176,15 +181,20 @@ def test_parse_comment_label_strips_whitespace():
 
 
 def test_comment_id_from_href():
-    href = f"https://www.facebook.com/groups/1/posts/2/?comment_id={COMMENT_ID}&reply_comment_id=5"
-    assert S.comment_id_from_href(href) == COMMENT_ID
     assert S.comment_id_from_href(f"/x?a=1&comment_id={COMMENT_ID}") == COMMENT_ID
+
+
+def test_comment_id_from_href_is_the_reply_id_for_a_reply():
+    # 2026 producer: a reply's permalink names its parent too; the parent's id would
+    # make the reply a duplicate of the parent.
+    href = f"https://www.facebook.com/groups/1/permalink/2/?comment_id={COMMENT_ID}&reply_comment_id=5&__tn__=R"
+    assert S.comment_id_from_href(href) == "5"
 
 
 def test_comment_id_from_href_none():
     assert S.comment_id_from_href("") is None
     assert S.comment_id_from_href(None) is None
-    assert S.comment_id_from_href("https://www.facebook.com/x?reply_comment_id=5") is None
+    assert S.comment_id_from_href("https://www.facebook.com/x?a_comment_id=5") is None
 
 
 # ---- case-insensitive regexes ----------------------------------------------
@@ -242,7 +252,7 @@ def test_end_live_when_stream_stops_does_not_match_plain_end_live_video():
 def test_selector_constants():
     assert "input[name='email']" in S.LOGIN_FORM_SELECTOR
     assert "form[action*='login']" in S.LOGIN_FORM_SELECTOR
-    assert S.COMMENT_ARTICLE_SELECTOR == "[role='article']"
+    assert S.COMMENT_ARTICLE_SELECTOR == "[role='article'][aria-label^='Comment by']"
     assert all(
         rx.flags & re.I
         for rx in (
@@ -309,16 +319,19 @@ def test_js_regex_unsupported_flags_raise():
 def test_js_regex_source_is_valid_and_equivalent_in_node():
     label = "Comment by Jane Doe 5 minutes ago"
     href = f"/x?comment_id={COMMENT_ID}"
+    reply = f"/x?comment_id={COMMENT_ID}&reply_comment_id=5"
     script = (
         f"const a={S.js_regex_source(S.COMMENT_LABEL_RE)};"
         f"const b={S.js_regex_source(S.COMMENT_ID_IN_HREF_RE)};"
         f"const c={S.js_regex_source(S.STREAM_KEY_RE)};"
         f"const d={S.js_regex_source(S.LIVE_ID_IN_URL_RE)};"
+        f"const e={S.js_regex_source(S.REPLY_COMMENT_ID_IN_HREF_RE)};"
         f"console.log(JSON.stringify([a.exec({label!r}).groups.author,"
-        f"b.exec({href!r})[1], c.test({KEY!r}), d.exec('/live/producer/dashboard/{LIVE_ID}/x')[1]]));"
+        f"b.exec({href!r})[1], c.test({KEY!r}), d.exec('/live/producer/v2/{LIVE_ID}/dashboard/')[1],"
+        f"e.exec({reply!r})[1], e.exec({href!r})]));"
     )
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20, check=True)
-    assert json.loads(out.stdout) == ["Jane Doe", COMMENT_ID, True, LIVE_ID]
+    assert json.loads(out.stdout) == ["Jane Doe", COMMENT_ID, True, LIVE_ID, "5", None]
 
 
 def test_group_name_pattern_is_literal_and_case_insensitive():

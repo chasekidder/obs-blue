@@ -23,7 +23,7 @@ from browser_harness import chromium_bin
 from stream_pilot import browser as browser_mod
 from stream_pilot.browser import CdpBrowser
 from stream_pilot.config import load_config
-from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
+from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter, comments_url
 from stream_pilot.ports import StreamTarget
 
 pytestmark = pytest.mark.browser
@@ -215,7 +215,7 @@ async def test_capture_start_opens_the_popout_when_nobody_did(stack, tmp_path):
 async def test_open_app_window_fallback_uses_cdp_and_warns(stack, caplog):
     cfg, browser, fb, cap = stack
     await fb.connect()
-    url = cfg.facebook.comments_url_template.format(live_id=LIVE_ID)
+    url = comments_url(cfg, LIVE_ID)
     with caplog.at_level(logging.WARNING, logger="stream_pilot.browser"):
         page = await browser.open_app_window(url, timeout_s=0.3)
     assert page.url.startswith(url)
@@ -242,7 +242,7 @@ async def test_open_app_window_real_handoff_finding(cdp_url, fixture_base_url, t
     fb = FacebookAdapter(cfg, browser)
     try:
         await fb.connect()
-        url = cfg.facebook.comments_url_template.format(live_id=LIVE_ID)
+        url = comments_url(cfg, LIVE_ID)
         started = time.monotonic()
         with caplog.at_level(logging.WARNING, logger="stream_pilot.browser"):
             page = await browser.open_app_window(url, timeout_s=8)

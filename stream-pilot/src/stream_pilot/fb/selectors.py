@@ -46,7 +46,8 @@ LOGIN_FORM_SELECTOR = "input[name='email'], input[name='pass'], form[action*='lo
 # host's progress. Seen on the stream PC (2026-11-21): the form is shown on
 # /live/producer/ itself, then 2FA at /two_step_verification/authentication/.
 LOGIN_FLOW_PATH_PREFIXES = ("/login", "/two_step_verification/", "/checkpoint/")
-COMMENT_ARTICLE_SELECTOR = "[role='article']"
+# The label keeps out other articles on the dashboard (e.g. a docked Messenger chat).
+COMMENT_ARTICLE_SELECTOR = "[role='article'][aria-label^='Comment by']"
 
 # ---- Value / URL patterns --------------------------------------------------
 
@@ -60,8 +61,10 @@ SERVER_URL_RE = re.compile(
 # 2026-11-21, during setup; that the id is the live video id still needs a real live).
 LIVE_ID_IN_URL_RE = re.compile(r"/live/producer/(?:v2/)?(?:dashboard/)?(\d{6,})")
 COMMENT_ID_IN_HREF_RE = re.compile(r"[?&]comment_id=(\d+)")
+# A reply's permalink carries its parent's comment_id as well; the reply's own id wins.
+REPLY_COMMENT_ID_IN_HREF_RE = re.compile(r"[?&]reply_comment_id=(\d+)")
 COMMENT_LABEL_RE = re.compile(
-    r"^Comment by (?P<author>.+?)(?: (?:\d+ \w+ ago|a minute ago|just now|now))?$", re.I
+    r"^Comment by (?P<author>.+?)(?: (?:(?:about )?(?:\d+|an?|a few) \w+ ago|just now|now))?$", re.I
 )
 
 _MASKED_RE = re.compile(r"•|\*{2,}|hidden", re.I)
@@ -110,8 +113,8 @@ def parse_comment_label(label: str) -> str | None:
 
 
 def comment_id_from_href(href: str | None) -> str | None:
-    """Comment id from a permalink's `comment_id=` query parameter."""
-    m = COMMENT_ID_IN_HREF_RE.search(href or "")
+    """Comment id from a permalink: `reply_comment_id=` for a reply, else `comment_id=`."""
+    m = REPLY_COMMENT_ID_IN_HREF_RE.search(href or "") or COMMENT_ID_IN_HREF_RE.search(href or "")
     return m.group(1) if m else None
 
 
@@ -234,18 +237,29 @@ def group_name_pattern(group_name: str) -> re.Pattern:
 
 # ---- Comment watcher (rendered into fb/watcher.js by fb/comments.py) -------
 
-# The comments popout lives under a URL path containing this marker.
-COMMENTS_PATH_MARKER = "/COMMENTS"
+# The 2026 producer has no comments-only page (the old /live/producer/dashboard/<id>/COMMENTS/
+# popout renders blank): the chat column is the live's dashboard, whose Comments module the
+# watcher pins over the whole window. stream-pilot appends this hash marker to the column's
+# URL (Facebook keeps it) so the column is never confused with the main producer tab, which
+# shows the same dashboard during go-live.
+COMMENTS_URL_MARKER = "#stream-pilot-comments"
 
 
 def popout_url_fragment(live_id: str) -> str:
-    """The part of a popout page URL that identifies the comments popout of ``live_id``."""
-    return f"/{live_id}{COMMENTS_PATH_MARKER}"
+    """Appended to the comments URL; identifies the comments column of ``live_id``."""
+    return f"{COMMENTS_URL_MARKER}/{live_id}/"
 
 
 def is_popout_url(url: str) -> bool:
-    """True if ``url`` is a comments popout page (of any live)."""
-    return COMMENTS_PATH_MARKER in url
+    """True if ``url`` is a comments column page (of any live)."""
+    return COMMENTS_URL_MARKER in url
+
+
+# The dashboard's Comments module: the nearest ancestor of its heading that also holds
+# the comment box. The watcher pins it over the window (it is off-screen in a narrow one).
+COMMENTS_MODULE_HEADING_SELECTOR = "h1, h2, [role='heading']"
+COMMENTS_MODULE_HEADING_TEXT = "Comments"
+COMMENTS_MODULE_ANCHOR_SELECTOR = "[role='textbox']"
 
 
 COMMENT_LABEL_ATTR = "aria-label"
@@ -253,6 +267,8 @@ COMMENT_LABEL_ATTR = "aria-label"
 COMMENT_AUTHOR_LINK_SELECTOR = "a[role='link']"
 # Permalink carrying the comment id; excluded from the comment text.
 COMMENT_PERMALINK_SELECTOR = "a[href*='comment_id=']"
+# The comment's controls (Like, Reply, Pin, See thread, ...); excluded from the comment text.
+COMMENT_CONTROLS_SELECTOR = "[role='button'], [role='list']"
 # Timestamp elements (also excluded from the comment text) and where their value lives.
 COMMENT_TIME_SELECTOR = "abbr[data-utime], time[datetime]"
 COMMENT_TIME_UTIME_ATTR = "data-utime"

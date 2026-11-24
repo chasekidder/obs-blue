@@ -366,12 +366,16 @@ class CdpBrowser:
         return None
 
     async def _wait_for_page(
-        self, prefix: str, timeout_s: float, exited_badly: Callable[[], bool] | None = None
+        self,
+        prefix: str,
+        timeout_s: float,
+        exited_badly: Callable[[], bool] | None = None,
+        contains: str | None = None,
     ) -> "Page | None":
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         while True:
-            page = await self.find_page(prefix)
+            page = await self.find_page(prefix, contains=contains)
             if page is not None:
                 return page
             if loop.time() >= deadline or (exited_badly is not None and exited_badly()):
@@ -388,7 +392,10 @@ class CdpBrowser:
         """
         _ = self.context  # BrowserNotConnected if not connected
         prefix = _origin_path_prefix(url)
-        page = await self.find_page(prefix)
+        # A hash marks the window as ours: another tab may show the same page without it.
+        fragment = urlsplit(url).fragment
+        marker = f"#{fragment}" if fragment else None
+        page = await self.find_page(prefix, contains=marker)
         if page is not None:
             self.track_popout(page)
             return page
@@ -409,7 +416,7 @@ class CdpBrowser:
                 return False
             return proc.exception() is not None or proc.result() != 0
 
-        page = await self._wait_for_page(prefix, timeout_s, exited_badly)
+        page = await self._wait_for_page(prefix, timeout_s, exited_badly, contains=marker)
         if page is None:
             page = self._adopt_new_page(before)
             if page is not None:
@@ -419,16 +426,16 @@ class CdpBrowser:
                 "app-window handoff produced no page (waited up to %.0fs); falling back to a CDP window",
                 timeout_s,
             )
-            page = await self._open_over_cdp(url, prefix)
+            page = await self._open_over_cdp(url, prefix, marker)
         self.track_popout(page)
         return page
 
-    async def _open_over_cdp(self, url: str, prefix: str) -> "Page":
+    async def _open_over_cdp(self, url: str, prefix: str, marker: str | None = None) -> "Page":
         try:
             before = set(self._open_pages())
             session = await self._browser_session()
             await session.send("Target.createTarget", {"url": url, "newWindow": True})
-            page = await self._wait_for_page(prefix, self.fallback_wait_s)
+            page = await self._wait_for_page(prefix, self.fallback_wait_s, contains=marker)
             if page is None:
                 page = self._adopt_new_page(before)
                 if page is not None:

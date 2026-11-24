@@ -31,6 +31,7 @@ def test_js_regex_literals_equal_selectors_output():
     script = render_watcher()
     assert f"const LABEL_RE = {S.js_regex_source(S.COMMENT_LABEL_RE)};" in script
     assert f"const COMMENT_ID_RE = {S.js_regex_source(S.COMMENT_ID_IN_HREF_RE)};" in script
+    assert f"const REPLY_ID_RE = {S.js_regex_source(S.REPLY_COMMENT_ID_IN_HREF_RE)};" in script
 
 
 def test_selectors_are_injected_as_js_string_literals():
@@ -40,10 +41,14 @@ def test_selectors_are_injected_as_js_string_literals():
         "LABEL_ATTR": S.COMMENT_LABEL_ATTR,
         "AUTHOR_LINK_SELECTOR": S.COMMENT_AUTHOR_LINK_SELECTOR,
         "PERMALINK_SELECTOR": S.COMMENT_PERMALINK_SELECTOR,
+        "CONTROLS_SELECTOR": S.COMMENT_CONTROLS_SELECTOR,
         "TIME_SELECTOR": S.COMMENT_TIME_SELECTOR,
         "TIME_UTIME_ATTR": S.COMMENT_TIME_UTIME_ATTR,
         "TIME_DATETIME_ATTR": S.COMMENT_TIME_DATETIME_ATTR,
-        "COMMENTS_PATH": S.COMMENTS_PATH_MARKER,
+        "COMMENTS_MARKER": S.COMMENTS_URL_MARKER,
+        "MODULE_HEADING_SELECTOR": S.COMMENTS_MODULE_HEADING_SELECTOR,
+        "MODULE_HEADING_TEXT": S.COMMENTS_MODULE_HEADING_TEXT,
+        "MODULE_ANCHOR_SELECTOR": S.COMMENTS_MODULE_ANCHOR_SELECTOR,
     }.items():
         assert f"const {name} = {json.dumps(value)};" in script
 
@@ -51,7 +56,8 @@ def test_selectors_are_injected_as_js_string_literals():
 def test_watcher_template_holds_no_facebook_markup_literals():
     """The only Facebook-specific text in the template lives behind placeholders."""
     tpl = watcher_template()
-    for needle in ("role=", "comment_id=", "aria-label", "data-utime", "/COMMENTS", "Comment by", "[role"):
+    for needle in ("role=", "comment_id=", "aria-label", "data-utime", "/COMMENTS", "Comment by", "[role",
+                   "stream-pilot-comments", "'Comments'", '"Comments"'):
         code = "\n".join(line for line in tpl.splitlines() if not line.lstrip().startswith("//"))
         assert needle not in code, needle
 

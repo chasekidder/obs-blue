@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 
 from stream_pilot.comment_log import CommentLog
+from stream_pilot.fb import selectors as S
 from stream_pilot.fb.comments import FbDomCapture
 
 pytestmark = pytest.mark.browser
@@ -302,16 +303,35 @@ async def test_last_message_at_and_attached_page(env):
     assert t is not None and time.monotonic() - t < 30
 
 
-async def test_comments_path_activates_without_force_flag(pw_browser, fixture_base_url, tmp_path):
+async def test_comments_marker_activates_without_force_flag(pw_browser, fixture_base_url, tmp_path):
     context = await pw_browser.new_context()  # no __spForceWatch
     try:
         page = await context.new_page()
         log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
         cap = FbDomCapture(context)
         await cap.attach(page, log)  # about:blank: nothing to reload
-        await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/")
-        await wait_until(lambda: len(rows(log.path)) == 4, what="rescan on COMMENTS path")
+        marker = S.popout_url_fragment(LIVE_ID)
+        await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/{marker}")
+        await wait_until(lambda: len(rows(log.path)) == 4, what="rescan on the marked page")
         assert pairs(log.path) == SEED
+    finally:
+        await context.close()
+
+
+async def test_comments_module_is_pinned_over_the_window(pw_browser, fixture_base_url, tmp_path):
+    context = await pw_browser.new_context()
+    try:
+        page = await context.new_page()
+        log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
+        cap = FbDomCapture(context)
+        await cap.attach(page, log)
+        await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/{S.popout_url_fragment(LIVE_ID)}")
+        await wait_until(lambda: len(rows(log.path)) == 4, what="rescan on the marked page")
+        pinned = await page.evaluate(
+            """() => { const m = document.querySelector('[data-sp-comments-focus]');
+                       return m && [m.id, getComputedStyle(m).position]; }"""
+        )
+        assert pinned == ["module", "fixed"]
     finally:
         await context.close()
 
@@ -323,7 +343,8 @@ async def test_other_pages_are_ignored_without_force_flag(pw_browser, fixture_ba
         log = CommentLog(tmp_path / "c.jsonl", LIVE_ID)
         cap = FbDomCapture(context)
         await cap.attach(page, log)
-        await page.goto(f"{fixture_base_url}/comments_popout.html")  # not a /COMMENTS path
+        # the same page without stream-pilot's marker (e.g. the main producer tab)
+        await page.goto(f"{fixture_base_url}/live/producer/dashboard/{LIVE_ID}/COMMENTS/")
         await asyncio.sleep(SETTLE_GRACE + 1.5)
         assert sum(cap.counts.values()) == 0
         assert rows(log.path) == []

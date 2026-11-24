@@ -1,4 +1,4 @@
-// Comment watcher for the Facebook comments popout (template).
+// Comment watcher for the Facebook comments column (template).
 //
 // Injected at document start by stream_pilot/fb/comments.py, which replaces the
 // double-underscore tokens below from stream_pilot/fb/selectors.py (the only file
@@ -37,14 +37,19 @@
     const LABEL_ATTR = __LABEL_ATTR__;
     const LABEL_RE = __LABEL_RE__;
     const COMMENT_ID_RE = __COMMENT_ID_RE__;
+    const REPLY_ID_RE = __REPLY_ID_RE__;
     const AUTHOR_LINK_SELECTOR = __AUTHOR_LINK_SELECTOR__;
     const PERMALINK_SELECTOR = __PERMALINK_SELECTOR__;
+    const CONTROLS_SELECTOR = __CONTROLS_SELECTOR__;
     const TIME_SELECTOR = __TIME_SELECTOR__;
     const TIME_UTIME_ATTR = __TIME_UTIME_ATTR__;
     const TIME_DATETIME_ATTR = __TIME_DATETIME_ATTR__;
-    const COMMENTS_PATH = __COMMENTS_PATH__;
+    const COMMENTS_MARKER = __COMMENTS_MARKER__;
+    const MODULE_HEADING_SELECTOR = __MODULE_HEADING_SELECTOR__;
+    const MODULE_HEADING_TEXT = __MODULE_HEADING_TEXT__;
+    const MODULE_ANCHOR_SELECTOR = __MODULE_ANCHOR_SELECTOR__;
 
-    if (!(String(location.pathname).includes(COMMENTS_PATH) || window.__spForceWatch === true)) return;
+    if (!(String(location.href).includes(COMMENTS_MARKER) || window.__spForceWatch === true)) return;
     window.__spWatcherInstalled = true;
 
     const SETTLE_MS = 1000;
@@ -53,7 +58,7 @@
     const OUTBOX_MAX = 1000;
     const DRAIN_RETRY_MS = 100;
     const DRAIN_RETRY_MAX = 300;
-    const SKIP_SELECTOR = PERMALINK_SELECTOR + ', ' + TIME_SELECTOR;
+    const SKIP_SELECTOR = PERMALINK_SELECTOR + ', ' + TIME_SELECTOR + ', ' + CONTROLS_SELECTOR;
     const INLINE_TAGS = new Set([
       'a', 'abbr', 'b', 'bdi', 'bdo', 'cite', 'code', 'del', 'dfn', 'em', 'i', 'ins', 'kbd',
       'mark', 'q', 's', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr',
@@ -173,7 +178,15 @@
       const label = LABEL_RE.exec(collapse(article.getAttribute(LABEL_ATTR)));
       if (label && label.groups && label.groups.author) {
         author = collapse(label.groups.author);
-        const link = findAuthorLink(article, author);
+        let link = findAuthorLink(article, author);
+        if (!link) {
+          // an unknown time phrase stayed in the label: "<author> <time>"
+          const any = findAuthorLink(article, null);
+          if (any && author.toLowerCase().startsWith(any.text.toLowerCase() + ' ')) {
+            link = any;
+            author = any.text;
+          }
+        }
         if (link) authorEl = link.el;
       } else {
         const link = findAuthorLink(article, null);
@@ -186,7 +199,8 @@
       let id = null;
       const idLink = ownMatches(article, PERMALINK_SELECTOR);
       if (idLink) {
-        const m = COMMENT_ID_RE.exec(idLink.getAttribute('href') || '');
+        const href = idLink.getAttribute('href') || '';
+        const m = REPLY_ID_RE.exec(href) || COMMENT_ID_RE.exec(href);
         if (m) id = m[1];
       }
       if (!author && !text && !id) return null;
@@ -333,9 +347,43 @@
       }
     }
 
+    // ---- layout: pin the Comments module over the window ------------------
+    // The chat column is the live's dashboard, whose Comments module is off-screen
+    // in a narrow window. Re-applied whenever React replaces the module.
+
+    const FOCUS_ATTR = 'data-sp-comments-focus';
+
+    function focusComments() {
+      try {
+        if (document.querySelector('[' + FOCUS_ATTR + ']')) return;
+        const heading = Array.from(document.querySelectorAll(MODULE_HEADING_SELECTOR))
+          .find((h) => collapse(h.textContent) === MODULE_HEADING_TEXT);
+        if (!heading) return;
+        let module = heading.parentElement;
+        while (module && module !== document.body && !module.querySelector(MODULE_ANCHOR_SELECTOR)) {
+          module = module.parentElement;
+        }
+        if (!module || module === document.body) return;
+        module.setAttribute(FOCUS_ATTR, '');
+        if (!document.getElementById('sp-comments-focus-style')) {
+          const style = document.createElement('style');
+          style.id = 'sp-comments-focus-style';
+          // The module sits in a stacking context that z-index cannot lift above the
+          // rest of the page, so everything else is made invisible (and unclickable).
+          style.textContent = 'body{visibility:hidden!important}'
+            + '[' + FOCUS_ATTR + ']{visibility:visible!important;position:fixed!important;inset:0!important;'
+            + 'z-index:2147483647!important;width:auto!important;height:auto!important;'
+            + 'max-width:none!important;max-height:none!important;margin:0!important;'
+            + 'overflow:auto!important;background:#fff!important;}';
+          (document.head || document.documentElement).appendChild(style);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     function onMutations(records) {
       try {
         if (phase !== 'initial') noteRemoved(records);
+        focusComments();
         schedulePump(DEBOUNCE_MS);
       } catch (e) { /* ignore */ }
     }
@@ -351,6 +399,7 @@
             send('rescan', []);
           }
         }, SETTLE_MAX_MS);
+        focusComments();
         pump();
         schedulePump(DEBOUNCE_MS);
         window.addEventListener('pagehide', () => {

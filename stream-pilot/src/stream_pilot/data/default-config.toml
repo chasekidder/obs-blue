@@ -3,7 +3,7 @@ actor_id = ""
 group_id = ""
 group_name = ""
 producer_url_template = "https://www.facebook.com/live/producer/?actor={actor_id}&entry_point=group&target_id={group_id}"
-comments_url_template = "https://www.facebook.com/live/producer/dashboard/{live_id}/COMMENTS/"
+comments_url_template = "https://www.facebook.com/live/producer/v2/{live_id}/dashboard/?entry_point=group"
 
 [obs]
 host = "127.0.0.1"

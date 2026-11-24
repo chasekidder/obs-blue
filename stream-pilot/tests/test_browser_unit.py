@@ -27,7 +27,7 @@ from stream_pilot.comment_log import CommentLog
 from stream_pilot.config import load_config
 from stream_pilot.fb import adapter as adapter_mod
 from stream_pilot.fb import selectors as S
-from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
+from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter, comments_url
 from stream_pilot.ports import StepFailed
 
 LIVE_ID = "1122334455667788"
@@ -417,6 +417,29 @@ async def test_open_app_window_returns_an_already_open_page_without_spawning(cfg
     assert await b.open_app_window(URL) is existing
     assert spawn_calls == []
     assert existing in b.popout_pages
+
+
+async def test_open_app_window_with_a_hash_ignores_a_tab_on_the_same_path_without_it(cfg):
+    # The main producer tab shows the live's dashboard during go-live; the comments
+    # column opens the same dashboard with a hash marker and must get its own window.
+    main_tab = FakePage("http://x.test/live/producer/v2/1122/dashboard/?entry_point=group")
+    want = "http://x.test/live/producer/v2/1122/dashboard/?entry_point=group#stream-pilot-comments/1122/"
+    holder: dict = {}
+
+    async def spawn(argv):
+        async def later():
+            await asyncio.sleep(0.03)
+            holder["ctx"].pages.append(FakePage(want))
+
+        holder["task"] = asyncio.ensure_future(later())
+
+    b, ctx, _ = make_browser(cfg, [main_tab], spawn=spawn)
+    holder["ctx"] = ctx
+    page = await b.open_app_window(want, timeout_s=2)
+    await holder["task"]
+    assert page is not main_tab
+    assert page.url == want
+    assert main_tab not in b.popout_pages
 
 
 async def test_open_app_window_falls_back_to_cdp_new_window(cfg, caplog):
@@ -853,7 +876,7 @@ async def test_facebook_adapter_open_comments_uses_template_and_parks_dashboard(
     cdp = FakeCdp(cfg)
     fb = FacebookAdapter(cfg, cdp)
     await fb.open_comments(LIVE_ID)
-    assert cdp.opened == [cfg.facebook.comments_url_template.format(live_id=LIVE_ID)]
+    assert cdp.opened == [comments_url(cfg, LIVE_ID)]
     await fb.park_dashboard()
     assert cdp.dashboard.gotos == ["about:blank"]
 
@@ -867,7 +890,7 @@ async def test_facebook_adapter_records_the_comments_popout_with_record_dir(cfg,
     monkeypatch.setattr(adapter_mod, "record_page", fake_record)
     cdp = FakeCdp(cfg)
     await FacebookAdapter(cfg, cdp, record_dir=Path("/rec")).open_comments(LIVE_ID)
-    assert recorded == [(cfg.facebook.comments_url_template.format(live_id=LIVE_ID), Path("/rec"), "comments_popout")]
+    assert recorded == [(comments_url(cfg, LIVE_ID), Path("/rec"), "comments_popout")]
     recorded.clear()
     await FacebookAdapter(cfg, FakeCdp(cfg)).open_comments(LIVE_ID)
     assert recorded == []
@@ -1012,7 +1035,7 @@ def fakes(monkeypatch):
 
 
 def popout_url(live_id=LIVE_ID):
-    return f"http://127.0.0.1:1/live/producer/dashboard/{live_id}/COMMENTS/"
+    return f"http://127.0.0.1:1/live/producer/dashboard/{live_id}/COMMENTS/{S.popout_url_fragment(live_id)}"
 
 
 async def test_capture_start_attaches_to_the_popout_and_writes_into_stream_dir(cfg, tmp_path, fakes):
@@ -1038,7 +1061,7 @@ async def test_capture_start_opens_the_popout_itself_when_missing(cfg, tmp_path,
     cdp = FakeCdp(cfg)
     cap = CaptureAdapter(cfg, cdp)
     await cap.start(LIVE_ID, tmp_path)
-    assert cdp.opened == [cfg.facebook.comments_url_template.format(live_id=LIVE_ID)]
+    assert cdp.opened == [comments_url(cfg, LIVE_ID)]
     assert FakeDom.instances[0].attaches[0][0].url == cdp.opened[0]
     await cap.stop()
 
@@ -1332,9 +1355,17 @@ async def test_open_popouts_and_untrack(cfg):
 
 def test_popout_url_fragment_lives_in_selectors():
     frag = S.popout_url_fragment(LIVE_ID)
-    assert frag == f"/{LIVE_ID}{S.COMMENTS_PATH_MARKER}"
-    assert S.is_popout_url(f"http://h/live/producer/dashboard/{LIVE_ID}{S.COMMENTS_PATH_MARKER}/")
+    assert frag == f"{S.COMMENTS_URL_MARKER}/{LIVE_ID}/"
+    assert S.is_popout_url(f"http://h/live/producer/v2/{LIVE_ID}/dashboard/?entry_point=group{frag}")
+    assert not S.is_popout_url(f"http://h/live/producer/v2/{LIVE_ID}/dashboard/?entry_point=group")
     assert not S.is_popout_url("http://h/login")
+    # live 12's column is not live 123's
+    assert S.popout_url_fragment("12") not in f"http://h/x{S.popout_url_fragment('123')}"
+
+
+def test_comments_url_appends_the_marker_to_the_configured_page(cfg):
+    url = comments_url(cfg, LIVE_ID)
+    assert url == cfg.facebook.comments_url_template.format(live_id=LIVE_ID) + S.popout_url_fragment(LIVE_ID)
 
 
 async def test_capture_reuses_a_tracked_redirected_popout_instead_of_opening_another(cfg, tmp_path, fakes):
@@ -1346,7 +1377,7 @@ async def test_capture_reuses_a_tracked_redirected_popout_instead_of_opening_ano
     await cap.start(LIVE_ID, tmp_path)
     assert cdp.opened == []
     assert FakeDom.instances[0].attaches[0][0] is stray
-    assert stray.gotos == [cfg.facebook.comments_url_template.format(live_id=LIVE_ID)]
+    assert stray.gotos == [comments_url(cfg, LIVE_ID)]
     await cap.stop()
 
 
