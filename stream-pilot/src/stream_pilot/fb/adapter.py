@@ -174,7 +174,9 @@ class CaptureAdapter:
             # One FbDomCapture per BrowserContext: the binding and init script are
             # installed once per context (a second instance would re-register them).
             self._dom = FbDomCapture(
-                context, claim_highlight=self._cfg.claim_highlight.enabled
+                context,
+                claim_highlight=self._cfg.claim_highlight.enabled,
+                comments_zoom=self._cfg.facebook.comments_zoom,
             )
             self._dom_context = context
 

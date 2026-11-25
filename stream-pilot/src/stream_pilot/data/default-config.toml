@@ -7,6 +7,8 @@ comments_url_template = "https://www.facebook.com/live/producer/v2/{live_id}/das
 # The live's title, typed into the producer's post details ([branding] enabled only).
 # {group_name} and {date} (a datetime: {date:%b %-d} gives "Nov 24") are filled in.
 live_title_template = "{group_name} Sale – {date:%b %-d}"
+# Text size of the comments column (1.0 = Facebook's own size; 0.5 to 3).
+comments_zoom = 1.5
 
 [obs]
 host = "127.0.0.1"

@@ -29,6 +29,9 @@ group_id = ""
 # The Group's display name exactly as Facebook shows it (used to confirm the
 # right Group is selected).
 group_name = ""
+# Text size of the comments column next to OBS (1.0 = Facebook's own size;
+# 0.5 to 3). Restart stream-pilot after a change; it applies when the column opens.
+#comments_zoom = 1.5
 
 [ssn]
 # Social Stream Ninja session ID. TREAT AS A SECRET: anyone who knows it can

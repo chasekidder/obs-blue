@@ -50,6 +50,7 @@
     const MODULE_ANCHOR_SELECTOR = __MODULE_ANCHOR_SELECTOR__;
     const MODULE_HIDE_SELECTOR = __MODULE_HIDE_SELECTOR__;
     const MODULE_UNCAP_SELECTOR = __MODULE_UNCAP_SELECTOR__;
+    const COMMENTS_ZOOM = __COMMENTS_ZOOM__;
     const CLAIM_HIGHLIGHT = __CLAIM_HIGHLIGHT__;
     const CLAIM_START_RE = __CLAIM_START_RE__;
     const CLAIM_NUMBER_RE = new RegExp(__CLAIM_NUMBER_RE__.source, 'g');
@@ -378,7 +379,8 @@
           style.id = 'sp-comments-focus-style';
           // The module sits in a stacking context that z-index cannot lift above the
           // rest of the page, so everything else is made invisible (and unclickable).
-          style.textContent = 'body{visibility:hidden!important}'
+          // The page behind is wider than the window: only the module may scroll.
+          style.textContent = 'html,body{overflow:hidden!important}body{visibility:hidden!important}'
             + '[' + FOCUS_ATTR + ']{visibility:visible!important;position:fixed!important;inset:0!important;'
             + 'z-index:2147483647!important;width:auto!important;height:auto!important;'
             + 'max-width:none!important;max-height:none!important;margin:0!important;'
@@ -386,7 +388,8 @@
             + MODULE_HIDE_SELECTOR.split(',').map((s) => '[' + FOCUS_ATTR + '] ' + s.trim()).join(',')
             + '{display:none!important}'
             + MODULE_UNCAP_SELECTOR.split(',').map((s) => '[' + FOCUS_ATTR + '] ' + s.trim()).join(',')
-            + '{max-width:none!important}';
+            + '{max-width:none!important}'
+            + '[' + FOCUS_ATTR + '] > *{zoom:' + COMMENTS_ZOOM + '}';
           (document.head || document.documentElement).appendChild(style);
         }
       } catch (e) { /* ignore */ }

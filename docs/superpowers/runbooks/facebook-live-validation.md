@@ -151,7 +151,7 @@ Pass criteria for part A: the status key reaches green `GO LIVE`, no failure fol
 
 Things to verify with the real comments during the 2-hour run (all unverified against real Facebook):
 
-1. **Popout zoom.** Press `Ctrl +` or `Ctrl -` in the popout once until the text is legible in the narrow column. Chromium remembers zoom per site, so this also applies to the parked dashboard (harmless).
+1. **Column text size.** The comments column is zoomed by `[facebook] comments_zoom` (default 1.5) and the comments fill the column's width. If the text is too small or too large, set `comments_zoom` in `site.toml` and restart stream-pilot; it applies when the column opens at the next Go Live. Do not use `Ctrl +` in the column: Chromium remembers that zoom per site, so it would also enlarge the producer page.
 2. **Comment IDs.** Check whether lines carry a real `fb_comment_id`:
    ```
    grep -c '"fb_comment_id": *"[0-9]' ~/streams/*/comments.jsonl

@@ -402,6 +402,10 @@ CLAIM_COMMENTS = [
     ("Ana Holt", "6 sure", False),
     ("Joe Wren", "20 goodnight everyone", False),
     ("Kim Ash", "Hi Penny", False),
+    ("Gil Park", "45 penguin gift tags 2/1.00 and the matching ribbon set if it is still "
+                 "available please, thank you so much!", True),
+    ("Nia Cole", "Does anyone know if the blue vase from earlier is still available? I would "
+                 "love it for my daughter who just moved into her first apartment 🏠💙", False),
 ]
 
 
@@ -486,3 +490,37 @@ async def test_pinned_comments_fill_the_window_width(env):
     overflow = await env.page.evaluate(
         "() => getComputedStyle(document.querySelector('[data-sp-comments-focus]')).overflowX")
     assert overflow == "hidden"
+
+
+
+async def test_zoomed_column_wraps_long_comments_and_records_them_whole(
+    pw_browser, fixture_base_url, tmp_path
+):
+    context = await pw_browser.new_context(viewport={"width": 576, "height": 1034})
+    await context.add_init_script("window.__spForceWatch = true")
+    page = await context.new_page()
+    await page.goto(f"{fixture_base_url}/comments_popout.html")
+    log = CommentLog(tmp_path / "comments.jsonl", LIVE_ID)
+    cap = FbDomCapture(context, comments_zoom=1.5)
+    await cap.attach(page, log)
+    e = Env(context, page, log, cap, fixture_base_url)
+    try:
+        await e.wait_rescans(1)
+        await e.ready()
+        long_text = " ".join(["Could you hold the green glass bowl and the two candle holders for me"] * 3)
+        await page.evaluate("([a, t]) => window.__addComment(a, t, false)", ["Nia Cole", long_text])
+        await wait_until(lambda: ("Nia Cole", long_text) in pairs(e.path), what="the long comment")
+        await asyncio.sleep(SETTLE_GRACE)
+        info = await page.evaluate("""() => {
+            const f = document.querySelector('[data-sp-comments-focus]');
+            const last = Array.from(document.querySelectorAll('[role=article]')).pop();
+            return {zoom: getComputedStyle(f.firstElementChild).zoom,
+                    lines: last.querySelector('.text').getClientRects().length,
+                    height: last.querySelector('.text').getBoundingClientRect().height,
+                    overflow: document.documentElement.scrollWidth <= innerWidth}; }""")
+        assert info["zoom"] == "1.5"
+        assert info["height"] > 60  # wrapped onto several lines, not cut off
+        assert info["overflow"]
+    finally:
+        await cap.detach()
+        await context.close()

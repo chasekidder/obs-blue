@@ -33,6 +33,7 @@ class FacebookCfg:
     producer_url_template: str
     comments_url_template: str
     live_title_template: str
+    comments_zoom: float
 
     @property
     def producer_url(self) -> str:

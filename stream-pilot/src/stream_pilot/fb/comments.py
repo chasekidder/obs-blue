@@ -38,9 +38,14 @@ BINDING_NAME = "__spComment"
 _PLACEHOLDER_RE = re.compile(r"__[A-Z][A-Z0-9_]*__")
 
 
-def _placeholders(claim_highlight: bool) -> dict[str, str]:
+ZOOM_RANGE = (0.5, 3.0)
+
+
+def _placeholders(claim_highlight: bool, comments_zoom: float) -> dict[str, str]:
     js_str = json.dumps  # a JS string literal (valid JS: ASCII-only escapes)
+    zoom = min(max(float(comments_zoom), ZOOM_RANGE[0]), ZOOM_RANGE[1])
     return {
+        "__COMMENTS_ZOOM__": f"{zoom:g}",
         "__CLAIM_HIGHLIGHT__": "true" if claim_highlight else "false",
         "__CLAIM_START_RE__": selectors.js_regex_source(claims.CLAIM_START_RE),
         "__CLAIM_NUMBER_RE__": selectors.js_regex_source(claims.CLAIM_NUMBER_RE),
@@ -70,14 +75,17 @@ def watcher_template() -> str:
     return resources.files("stream_pilot.fb").joinpath("watcher.js").read_text(encoding="utf-8")
 
 
-def render_watcher(template: str | None = None, *, claim_highlight: bool = False) -> str:
+def render_watcher(
+    template: str | None = None, *, claim_highlight: bool = False, comments_zoom: float = 1.0
+) -> str:
     """The watcher script with every placeholder filled in from ``selectors``.
 
-    ``claim_highlight`` is the ``[claim_highlight]`` switch. Raises RuntimeError
-    if the template uses an unknown placeholder.
+    ``claim_highlight`` is the ``[claim_highlight]`` switch, ``comments_zoom`` the
+    column's text size (clamped to ZOOM_RANGE). Raises RuntimeError if the template
+    uses an unknown placeholder.
     """
     script = watcher_template() if template is None else template
-    for placeholder, value in _placeholders(claim_highlight).items():
+    for placeholder, value in _placeholders(claim_highlight, comments_zoom).items():
         script = script.replace(placeholder, value)
     left = sorted(set(_PLACEHOLDER_RE.findall(script)))
     if left:
@@ -116,9 +124,12 @@ class _Router:
     it receives the health bookkeeping (counts / last_message_at).
     """
 
-    def __init__(self, context: "BrowserContext", claim_highlight: bool = False) -> None:
+    def __init__(
+        self, context: "BrowserContext", claim_highlight: bool = False, comments_zoom: float = 1.0
+    ) -> None:
         self._context = context
         self._claim_highlight = claim_highlight
+        self._comments_zoom = comments_zoom
         self._installed = False
         self._binding_task: "asyncio.Task | None" = None
         self._script_task: "asyncio.Task | None" = None
@@ -143,7 +154,9 @@ class _Router:
                 "_binding_task",
                 lambda: self._context.expose_binding(BINDING_NAME, self.on_message),
             )
-            script = render_watcher(claim_highlight=self._claim_highlight)
+            script = render_watcher(
+                claim_highlight=self._claim_highlight, comments_zoom=self._comments_zoom
+            )
             await self._run_step("_script_task", lambda: self._context.add_init_script(script))
             self._installed = True
 
@@ -184,10 +197,12 @@ class _Router:
 _ROUTERS: "weakref.WeakKeyDictionary[Any, _Router]" = weakref.WeakKeyDictionary()
 
 
-def _router_for(context: "BrowserContext", claim_highlight: bool = False) -> _Router:
+def _router_for(
+    context: "BrowserContext", claim_highlight: bool = False, comments_zoom: float = 1.0
+) -> _Router:
     router = _ROUTERS.get(context)
     if router is None:
-        router = _ROUTERS[context] = _Router(context, claim_highlight)
+        router = _ROUTERS[context] = _Router(context, claim_highlight, comments_zoom)
     return router
 
 
@@ -211,10 +226,11 @@ class FbDomCapture:
         *,
         clock: Callable[[], float] = time.monotonic,
         claim_highlight: bool = False,
+        comments_zoom: float = 1.0,
     ) -> None:
         self._context = context
         self._clock = clock
-        self._router = _router_for(context, claim_highlight)
+        self._router = _router_for(context, claim_highlight, comments_zoom)
         self.last_message_at: float | None = None
         self.counts: Counter[str] = Counter()
 
