@@ -17,6 +17,7 @@ from stream_pilot.recorder import (
     clips,
     ffmpeg_argv,
     last_session,
+    opus_samples,
     parse_segment_line,
     parse_start,
 )
@@ -215,8 +216,12 @@ def test_real_ffmpeg_finalizes_the_last_clip_on_sigint(tmp_path, monkeypatch):
     assert len(names) >= 3
     assert all((tmp_path / "audio" / n).stat().st_size > 0 for n in names)
     listed = [x for x in recs if x["type"] == "clip"]
-    assert [c["start_sample"] for c in listed] == [48000 * i for i in range(len(listed))]
-    assert listed[-1]["end_sample"] > listed[-1]["start_sample"]
+    # contiguous, and each clip as long as the file really is
+    assert listed[0]["start_sample"] == 0
+    assert all(b["start_sample"] == a["end_sample"] for a, b in zip(listed, listed[1:]))
+    for c in listed:
+        assert c["end_sample"] - c["start_sample"] == opus_samples(tmp_path / "audio" / c["file"])
+    assert all(abs(c["end_sample"] - c["start_sample"] - 48000) <= 960 for c in listed[:-1])
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,channels",
          "-of", "json", str(tmp_path / "audio" / names[-1])],
@@ -250,3 +255,38 @@ def test_a_second_stop_request_does_not_signal_ffmpeg_again(tmp_path, monkeypatc
     threading.Timer(0.05, stop_twice).start()
     r.run()
     assert made[0].signals == [signal.SIGINT]
+
+
+def ogg_opus(granule: int, preskip: int = 312) -> bytes:
+    head = b"OggS" + bytes(2) + (0).to_bytes(8, "little") + bytes(16) + b"OpusHead" + bytes([1, 1]) \
+        + preskip.to_bytes(2, "little") + bytes(8)
+    return head + b"..." + b"OggS" + bytes(2) + granule.to_bytes(8, "little") + bytes(16)
+
+
+def test_opus_samples_from_the_last_granule(tmp_path):
+    p = tmp_path / "c.opus"
+    p.write_bytes(ogg_opus(1440312))
+    assert opus_samples(p) == 1440000
+    p.write_bytes(b"OggS partial")
+    assert opus_samples(p) is None
+    assert opus_samples(tmp_path / "missing.opus") is None
+
+
+def test_offsets_are_contiguous_even_when_ffmpeg_times_jitter(tmp_path, monkeypatch):
+    monkeypatch.setattr(rec_mod, "ANCHOR_WAIT_S", 0.2)
+
+    class Jitter(FakeFfmpeg):
+        def _clip(self):
+            name = Path(self.pattern % self._n).name
+            Path(self.pattern % self._n).write_bytes(ogg_opus(1440000 + 312 + self._n))
+            with self.csv.open("a") as f:  # the next clip's start is a few samples off
+                f.write(f"{name},{(self._n * 1440003) / 48000:.6f},{((self._n + 1) * 1440000) / 48000:.6f}\n")
+            self._n += 1
+
+    r = Recorder(tmp_path, AUDIO, REC, popen=lambda argv, **kw: Jitter(argv, clips_before_stop=3),
+                 sleep=lambda s: time.sleep(0.001))
+    threading.Timer(0.05, r.request_stop).start()
+    r.run()
+    listed = [x for x in r.manifest.records() if x["type"] == "clip"]
+    assert [(c["start_sample"], c["end_sample"]) for c in listed] == [
+        (0, 1440000), (1440000, 2880001), (2880001, 4320003), (4320003, 5760006)]

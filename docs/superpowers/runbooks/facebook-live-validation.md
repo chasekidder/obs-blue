@@ -321,13 +321,13 @@ These come from the spec's "Verify on hardware" table. Each row has a check and 
    systemctl --user show obs.service -p MemoryLow
    systemctl --user show stream-pilot.service -p MemoryHigh -p MemoryMax
    ```
-   Expected: Chromium `MemoryHigh=3221225472` (3G) and `OOMScoreAdjust=500`; OBS `MemoryLow=1073741824` (1G). stream-pilot sets no limit, so `MemoryHigh=infinity` and `MemoryMax=infinity` are normal.
+   Expected: Chromium `MemoryHigh=5368709120` (5G) and `OOMScoreAdjust=500`; OBS `MemoryLow=1073741824` (1G). stream-pilot sets no limit, so `MemoryHigh=infinity` and `MemoryMax=infinity` are normal.
 4. Who uses the memory (during the 2-hour run):
    ```
    systemd-cgls --user
    systemd-cgtop --user -m
    ```
-   Check that OBS, the Chromium tree and stream-pilot are in separate units, and that Chromium stays below its 3G soft ceiling.
+   Check that OBS, the Chromium tree and stream-pilot are in separate units, and that Chromium stays below its 5G soft ceiling (it grows by about 4-5 MB a minute during a live, mostly Facebook's dashboard in the comments column; about 2.6 GB after 85 minutes on 2026-11-24).
 5. systemd-oomd must not kill user units:
    ```
    systemctl --user show -p ManagedOOMMemoryPressure app.slice

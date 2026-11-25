@@ -9,7 +9,9 @@ ExecStart=/usr/libexec/stream-pilot/chromium-launch about:blank
 Restart=on-failure
 RestartSec=3
 OOMScoreAdjust=500
-MemoryHigh=3G
+# Soft ceiling (16 GB PC). Facebook's live dashboard, which is the comments column,
+# grows about 2 MB/min (measured 2026-11-24), so 3G would be reached in a long sale.
+MemoryHigh=5G
 
 [Install]
 WantedBy=graphical-session.target

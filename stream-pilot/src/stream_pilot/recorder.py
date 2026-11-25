@@ -13,8 +13,11 @@ Opus mono clips of ``clip_s`` seconds in ``<stream_dir>/audio/``.
   did not report one).
 * ``{"type": "clip", "session": 1, "file": "s01-0000.opus", "start_sample": 0,
   "end_sample": 1440000, ...}``: offsets in samples at 48 kHz from the session's
-  first sample. A clip is listed once ffmpeg has closed it; only listed clips are
-  finished (a clip cut short by a crash or power cut is not).
+  first sample. Each clip starts where the previous one ended, and its length is
+  the exact sample count of the file (its last Ogg page's granule position minus
+  the Opus pre-skip); ffmpeg's clip times carry the PulseAudio timestamps' jitter
+  of a few samples. A clip is listed once ffmpeg has closed it; only listed clips
+  are finished (a clip cut short by a crash or power cut is not).
 * ``{"type": "gap", "session": 2, "from": <unix s>, "to": <unix s>}``: no audio
   between the end of the previous session's last clip and this session's start.
 * ``{"type": "session_end", "session": 1, "at": <unix s>, "reason": "..."}``.
@@ -79,6 +82,20 @@ def parse_start(line: str) -> float | None:
         return None
     value = float(m.group(1))
     return value if value > 1e9 else None  # a relative start (0.0) is no anchor
+
+
+def opus_samples(path: Path) -> int | None:
+    """Exact sample count of a finished Ogg Opus file: last granule position minus pre-skip."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    head, last = data.find(b"OpusHead"), data.rfind(b"OggS")
+    if head < 0 or last < 0 or len(data) < last + 14 or len(data) < head + 12:
+        return None
+    preskip = int.from_bytes(data[head + 10:head + 12], "little")
+    granule = int.from_bytes(data[last + 6:last + 14], "little", signed=True)
+    return granule - preskip if granule > preskip else None
 
 
 def parse_segment_line(line: str) -> tuple[str, float, float] | None:
@@ -170,6 +187,7 @@ class Recorder:
         self._stop = threading.Event()
         self._proc: Any = None
         self._interrupted: Any = None
+        self._next_sample = 0
 
     def request_stop(self, *_args: object) -> None:
         self._stop.set()
@@ -228,6 +246,7 @@ class Recorder:
         })
         log.info("recorder: session %d started (%s anchor)", session, kind)
         offset = 0
+        self._next_sample = 0
         stop_sent_at: float | None = None
         while True:
             offset = self._list_clips(csv_path, offset, session, started_at)
@@ -276,7 +295,11 @@ class Recorder:
             if seg is None:
                 continue
             name, start_s, end_s = seg
-            start, end = round(start_s * SAMPLE_RATE), round(end_s * SAMPLE_RATE)
+            samples = opus_samples(self.audio_dir / name)
+            if samples is None:
+                samples = round(end_s * SAMPLE_RATE) - round(start_s * SAMPLE_RATE)
+            start = self._next_sample
+            end = self._next_sample = start + samples
             self.manifest.append({
                 "type": "clip", "session": session, "file": name,
                 "start_sample": start, "end_sample": end,
