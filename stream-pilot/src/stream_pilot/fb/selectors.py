@@ -262,6 +262,10 @@ COMMENTS_MODULE_HEADING_TEXT = "Comments"
 COMMENTS_MODULE_ANCHOR_SELECTOR = "[role='textbox']"
 # Hidden in the pinned module: minimizing it would collapse the list the watcher reads.
 COMMENTS_MODULE_HIDE_SELECTOR = "[aria-label='Minimize comments']"
+# Uncapped in the pinned module: the dashboard sizes each comment with max-width:
+# fit-content for its narrow original column, so in the chat window the comments only
+# filled about half the width (seen on the stream PC, 2026-11-24).
+COMMENTS_MODULE_UNCAP_SELECTOR = "div"
 
 
 COMMENT_LABEL_ATTR = "aria-label"

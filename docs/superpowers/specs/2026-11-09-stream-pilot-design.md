@@ -129,7 +129,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
 
   KWin rules match the column by its app-window ID (`chrome-www.facebook.com__live_producer…`), not by title. OBS gets a matching rule for the rest of the screen, so the layout is fixed. The SSN dock is not displayed.
 
-  **2026 Live Producer (found on the stream PC, 2026-11-24):** the old comments popout (`/live/producer/dashboard/<id>/COMMENTS/`) renders blank, and there is no comments-only page. The column therefore opens the live's dashboard (`/live/producer/v2/<id>/dashboard/`) with a `#stream-pilot-comments/<id>/` marker that Facebook keeps. The comment watcher runs only on pages with the marker (the main producer tab shows the same dashboard during go-live) and pins the dashboard's Comments module over the window, hiding the rest of the page. The dashboard is not responsive, so in a 576 px window the module would otherwise be off-screen.
+  **2026 Live Producer (found on the stream PC, 2026-11-24):** the old comments popout (`/live/producer/dashboard/<id>/COMMENTS/`) renders blank, and there is no comments-only page. The column therefore opens the live's dashboard (`/live/producer/v2/<id>/dashboard/`) with a `#stream-pilot-comments/<id>/` marker that Facebook keeps. The comment watcher runs only on pages with the marker (the main producer tab shows the same dashboard during go-live) and pins the dashboard's Comments module over the window, hiding the rest of the page, and lifts the dashboard's width caps on the comments (they shrink to `fit-content` for the dashboard's narrow column, so they would fill only about half of the chat window). The dashboard is not responsive, so in a 576 px window the module would otherwise be off-screen.
 
 ## OBS
 

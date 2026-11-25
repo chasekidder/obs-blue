@@ -62,6 +62,7 @@ def _placeholders(claim_highlight: bool) -> dict[str, str]:
         "__MODULE_HEADING_TEXT__": js_str(selectors.COMMENTS_MODULE_HEADING_TEXT),
         "__MODULE_ANCHOR_SELECTOR__": js_str(selectors.COMMENTS_MODULE_ANCHOR_SELECTOR),
         "__MODULE_HIDE_SELECTOR__": js_str(selectors.COMMENTS_MODULE_HIDE_SELECTOR),
+        "__MODULE_UNCAP_SELECTOR__": js_str(selectors.COMMENTS_MODULE_UNCAP_SELECTOR),
     }
 
 

@@ -5,7 +5,8 @@
 <div id="module">
 <h1>Comments</h1>
 <div role="button" id="minimize" aria-label="Minimize comments">_</div>
-<div id="list"></div>
+<!-- like the 2026 dashboard: comments shrink to fit-content inside a narrow column -->
+<div id="list-wrap" style="display:flex"><div id="list" style="flex:1 1 auto;max-width:fit-content"></div></div>
 <div role="textbox" contenteditable="true" aria-label="Write a comment"></div>
 </div>
 <script>

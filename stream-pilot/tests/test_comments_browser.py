@@ -472,3 +472,17 @@ async def test_highlighting_off_adds_nothing(pw_browser, fixture_base_url, tmp_p
     finally:
         await e.cap.detach()
         await e.context.close()
+
+
+async def test_pinned_comments_fill_the_window_width(env):
+    await env.page.set_viewport_size({"width": 576, "height": 900})
+    await env.page.evaluate("window.__addComment('Rita Vale', '21 cookie sheets 3', false)")
+    await asyncio.sleep(SETTLE_GRACE)
+    widths = await env.page.evaluate("""() => {
+        const m = document.querySelector('[data-sp-comments-focus]').getBoundingClientRect().width;
+        return Array.from(document.querySelectorAll('[role=article]'))
+          .map((a) => a.getBoundingClientRect().width / m); }""")
+    assert widths and min(widths) > 0.9, widths
+    overflow = await env.page.evaluate(
+        "() => getComputedStyle(document.querySelector('[data-sp-comments-focus]')).overflowX")
+    assert overflow == "hidden"

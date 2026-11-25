@@ -50,6 +50,7 @@ def test_selectors_are_injected_as_js_string_literals():
         "MODULE_HEADING_TEXT": S.COMMENTS_MODULE_HEADING_TEXT,
         "MODULE_ANCHOR_SELECTOR": S.COMMENTS_MODULE_ANCHOR_SELECTOR,
         "MODULE_HIDE_SELECTOR": S.COMMENTS_MODULE_HIDE_SELECTOR,
+        "MODULE_UNCAP_SELECTOR": S.COMMENTS_MODULE_UNCAP_SELECTOR,
     }.items():
         assert f"const {name} = {json.dumps(value)};" in script
 
