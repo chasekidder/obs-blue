@@ -87,6 +87,11 @@ REATTACH_CANCEL_WAIT_S = 3.0
 # Re-attach attempts back off after failures: next try in min(MAX, BASE * 2**failures) s.
 REATTACH_BACKOFF_BASE_S = 15.0
 REATTACH_BACKOFF_MAX_S = 300.0
+# The comments column can load without Facebook's live updates (seen 2026-11-25:
+# new comments never arrived until a reload), so while LIVE the capture compares
+# it with Facebook this often (capture.check_fresh), bounded by the timeout.
+FRESH_CHECK_S = 90.0
+FRESH_CHECK_TIMEOUT_S = 60.0
 # Bound for open_comments / capture.start in the go-live and resume paths.
 CAPTURE_STEP_TIMEOUT_S = 90.0
 # Bound for having SSN reopen its background tab (runs in its own task when self-healing).
@@ -166,6 +171,8 @@ class Controller:
         self._reattach: asyncio.Task | None = None
         self._reattach_failures = 0
         self._reattach_next_try = 0.0
+        self._fresh: asyncio.Task | None = None
+        self._fresh_next: float | None = None  # clock() of the next check; None: not scheduled
         self._ssn_heal: asyncio.Task | None = None
         self._ssn_healed_at: float | None = None
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
@@ -255,6 +262,7 @@ class Controller:
     async def aclose(self) -> None:
         """Cancel background tasks (shutdown / test teardown)."""
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
+        await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._ssn_heal)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
@@ -266,7 +274,7 @@ class Controller:
         while True:
             pending = {
                 t
-                for t in (self._flow, self._restart, self._reattach, self._ssn_heal,
+                for t in (self._flow, self._restart, self._reattach, self._fresh, self._ssn_heal,
                           *self._feature_tasks)
                 if t is not None and not t.done()
             }
@@ -414,6 +422,8 @@ class Controller:
 
     async def _begin_end(self, *, power_off: bool) -> None:
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
+        await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
+        self._fresh_next = None
         await self._cancel(self._restart)
         self._power_after_end = False
         self._outro = self.state == State.LIVE  # not while RECONNECTING: nothing would air it
@@ -465,6 +475,7 @@ class Controller:
         elif self.state in LIVE_STATES:
             self._maybe_reattach_capture()
             if self.state == State.LIVE:
+                self._maybe_check_fresh()
                 await self._poll_obs_while_live()
 
     async def _redo_setup(self, why: str) -> None:
@@ -514,6 +525,40 @@ class Controller:
         self._reattach = asyncio.get_running_loop().create_task(
             self._reattach_capture(live_id, stream_dir)
         )
+
+    def _maybe_check_fresh(self) -> None:
+        """Every FRESH_CHECK_S while LIVE, run ``capture.check_fresh`` in its own task.
+
+        Only for capture objects that provide it (the browser adapter); at most
+        one at a time, so a Tick is never held up by it.
+        """
+        check = getattr(self.capture, "check_fresh", None)
+        live_id = self.live_id
+        if check is None or live_id is None or not self._flow_idle():
+            return
+        if self._fresh is not None and not self._fresh.done():
+            return
+        if self._reattach is not None and not self._reattach.done():
+            return  # it may be opening the column right now
+        now = self.clock()
+        if self._fresh_next is None:
+            self._fresh_next = now + FRESH_CHECK_S
+            return
+        if now < self._fresh_next:
+            return
+        self._fresh_next = now + FRESH_CHECK_S
+        self._fresh = asyncio.get_running_loop().create_task(self._check_fresh(check, live_id))
+
+    @staticmethod
+    async def _check_fresh(check: Callable[[str], Awaitable[object]], live_id: str) -> None:
+        try:
+            await asyncio.wait_for(check(live_id), FRESH_CHECK_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            log.warning("capture.check_fresh timed out after %.0fs (continuing)", FRESH_CHECK_TIMEOUT_S)
+        except Exception:
+            log.exception("capture.check_fresh failed (continuing)")
 
     async def _reattach_capture(self, live_id: str, stream_dir: Path) -> None:
         try:

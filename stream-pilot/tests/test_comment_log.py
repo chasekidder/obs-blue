@@ -47,6 +47,29 @@ def test_key_normalises_case_and_whitespace():
     assert C("ANN", "sold").key() == C("ann", " sold ").key()
 
 
+def test_has_id_and_last_dom_at_track_new_dom_comments(tmp_path):
+    clock = FakeClock(500.0)
+    log, _ = make(tmp_path, clock)
+    assert log.last_dom_at is None
+    assert not log.has_id("11")
+    seed(log, C("ann", "sold", "11"))
+    assert log.has_id("11") and log.last_dom_at == 500.0
+    clock.advance(30)
+    assert log.ingest_dom([C("ann", "sold", "11")], rescan=True) == 0  # a rescan repeat
+    assert log.last_dom_at == 500.0
+    log.append_ssn(C("bob", "hi"))  # SSN lines say nothing about the column
+    assert log.last_dom_at == 500.0
+    seed(log, C("bob", "two", "12"))
+    assert log.last_dom_at == 530.0
+
+
+def test_has_id_after_resume(tmp_path):
+    log, p = make(tmp_path)
+    seed(log, C("ann", "sold", "11"))
+    again = CommentLog(p, "live1", FakeClock())
+    assert again.has_id("11") and not again.has_id("12")
+
+
 def test_live_repeats_kept(tmp_path):
     log, p = make(tmp_path)
     assert log.ingest_dom([C("ann", "sold")], rescan=False) == 1

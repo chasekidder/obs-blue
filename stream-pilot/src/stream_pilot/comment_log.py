@@ -62,6 +62,8 @@ class CommentLog:
         self.corrupt_lines = 0
         self._dom_keys: list[tuple[str, str]] = []
         self._seen_ids: set[str] = set()
+        # clock() of the last new fb_dom line written by this instance (None: none yet).
+        self.last_dom_at: float | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._load_existing()
 
@@ -134,12 +136,17 @@ class CommentLog:
 
     def _append_dom(self, c: Comment) -> None:
         self._write_comment("fb_dom", c)
+        self.last_dom_at = self._clock()
         self._dom_keys.append(c.key())
         if c.fb_comment_id:
             self._seen_ids.add(c.fb_comment_id)
 
     def _is_seen(self, c: Comment) -> bool:
         return bool(c.fb_comment_id) and c.fb_comment_id in self._seen_ids
+
+    def has_id(self, fb_comment_id: str) -> bool:
+        """True if an fb_dom line with this Facebook comment ID was written (or resumed)."""
+        return fb_comment_id in self._seen_ids
 
     def _record_gap(self, batch_size: int) -> None:
         gap = {"at": self._clock(), "batch_size": batch_size}

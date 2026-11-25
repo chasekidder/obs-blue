@@ -14,7 +14,9 @@ only formats the URL templates from the config.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from pathlib import Path
 
 from stream_pilot.browser import CdpBrowser
@@ -32,6 +34,21 @@ _POPOUT_GRACE_S = 1.0  # how long start() looks for an already-open popout befor
 _POLL_S = 0.1
 _GOTO_BLANK_MIN_S = 5.0
 _CLOSE_POPOUT_S = 3.0  # bound for closing one popout page in stop()
+# check_fresh: a column that captured a new comment this recently is live; the
+# fresh copy of the page gets this long to show its comments; an ID it shows
+# must still be missing this much later (the column may just be catching up).
+FRESH_QUIET_S = 90.0
+FRESH_LOAD_S = 25.0
+FRESH_SETTLE_S = 5.0
+# Every comment article's own permalink href (null if it has none), as in watcher.js.
+_PERMALINKS_JS = """(([articleSel, linkSel]) => {
+  return Array.from(document.querySelectorAll(articleSel)).map((article) => {
+    for (const a of article.querySelectorAll(linkSel)) {
+      if (a.closest(articleSel) === article) return a.getAttribute('href') || null;
+    }
+    return null;
+  });
+})(%s)"""
 
 
 def comments_url(cfg: Config, live_id: str) -> str:
@@ -159,6 +176,44 @@ class CaptureAdapter:
             return False
         page = dom.attached_page
         return page is not None and not page.is_closed()
+
+    async def check_fresh(self, live_id: str) -> bool:
+        """Reload the comments column if Facebook shows comments it never delivered.
+
+        The column can load without Facebook's live updates: it keeps showing what
+        it had while new comments never arrive (seen 2026-11-25). When no new
+        comment was captured for FRESH_QUIET_S, the live's comments page is read
+        in a background tab; an ID shown there and still not captured
+        FRESH_SETTLE_S later means the column is stale, and it is reloaded (the
+        rescan that follows captures what it missed). True if it was reloaded.
+        """
+        comment_log, dom = self._log, self._dom
+        page = dom.attached_page if dom is not None else None
+        if comment_log is None or comment_log.live_id != live_id or page is None or page.is_closed():
+            return False
+        last = comment_log.last_dom_at
+        if last is not None and time.time() - last < FRESH_QUIET_S:
+            return False
+        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
+        script = _PERMALINKS_JS % json.dumps([S.COMMENT_ARTICLE_SELECTOR, S.COMMENT_PERMALINK_SELECTOR])
+        hrefs = await self._browser.read_in_background(
+            url, script, ready_selector=S.COMMENT_ARTICLE_SELECTOR, timeout_s=FRESH_LOAD_S
+        )
+        shown = {i for i in (S.comment_id_from_href(h) for h in hrefs or []) if i}
+        missing = {i for i in shown if not comment_log.has_id(i)}
+        if not missing:
+            log.info("comments column is up to date (%d comment(s) on Facebook)", len(shown))
+            return False
+        await asyncio.sleep(FRESH_SETTLE_S)
+        missing = {i for i in missing if not comment_log.has_id(i)}
+        if not missing or page.is_closed() or dom.attached_page is not page:
+            return False
+        log.warning(
+            "comments column missed %d of %d comment(s) Facebook shows; reloading it",
+            len(missing), len(shown),
+        )
+        await page.reload()
+        return True
 
     def _check_gen(self, gen: int) -> None:
         if gen != self._gen:

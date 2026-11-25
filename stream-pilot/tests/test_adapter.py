@@ -255,3 +255,84 @@ async def test_open_app_window_real_handoff_finding(cdp_url, fixture_base_url, t
         assert page.url.startswith(url)
     finally:
         await fb.close_browser()
+
+
+# ------------------------------------------------- stale comments column check
+
+SEED_IDS = {"9988776655443300", "9988776655443302"}  # Ann and Cara carry permalinks
+
+
+@pytest.fixture
+def quick_fresh(monkeypatch):
+    from stream_pilot.fb import adapter as adapter_mod
+
+    monkeypatch.setattr(adapter_mod, "FRESH_SETTLE_S", 0.2)
+    monkeypatch.setattr(adapter_mod, "FRESH_LOAD_S", 5.0)
+
+
+async def _pages_now(browser) -> int:
+    return len([p for p in browser.context.pages if not p.is_closed()])
+
+
+async def test_read_in_background_returns_and_closes_the_tab(stack):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    dashboard = await browser.dashboard_page()
+    before = await _pages_now(browser)
+    url = cfg.facebook.comments_url_template.format(live_id=LIVE_ID)
+    n = await browser.read_in_background(
+        url, "document.querySelectorAll('[role=article]').length",
+        ready_selector="[role=article]", timeout_s=5,
+    )
+    assert n == len(SEED)
+    assert await _pages_now(browser) == before
+    assert await browser.dashboard_page() is dashboard
+
+
+async def test_check_fresh_reloads_a_stale_column(stack, tmp_path, quick_fresh, caplog):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    stream_dir = tmp_path / "fresh1"
+    await cap.start(LIVE_ID, stream_dir)
+    col = cap.dom_capture.attached_page
+    # the column shows nothing (stale), while a fresh load shows the seed comments
+    hellos = cap.dom_capture.counts["hello"]
+    await col.evaluate("window.__reloadWith(0)")
+    await wait_until(lambda: cap.dom_capture.counts["hello"] > hellos, what="the empty column's watcher")
+    hellos = cap.dom_capture.counts["hello"]
+    with caplog.at_level(logging.INFO, logger="stream_pilot.fb.adapter"):
+        assert await cap.check_fresh(LIVE_ID) is True
+    assert "missed 2 of 2 comment(s)" in caplog.text
+    await wait_until(lambda: cap.dom_capture.counts["hello"] > hellos, what="the reloaded column's watcher")
+    assert cap.dom_capture.attached_page is col  # the same column, reloaded
+    assert cap.healthy() is True
+
+
+async def test_check_fresh_leaves_an_up_to_date_column(stack, tmp_path, quick_fresh, caplog):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    stream_dir = tmp_path / "fresh2"
+    await cap.start(LIVE_ID, stream_dir)
+    await wait_until(lambda: len(dom_pairs(stream_dir / "comments.jsonl")) >= len(SEED), what="the seed")
+    cap._log.last_dom_at -= 1000  # quiet for long enough to be checked
+    rescans = cap.dom_capture.counts["rescan"]
+    with caplog.at_level(logging.INFO, logger="stream_pilot.fb.adapter"):
+        assert await cap.check_fresh(LIVE_ID) is False
+    assert "up to date (2 comment(s) on Facebook)" in caplog.text
+    await asyncio.sleep(0.5)
+    assert cap.dom_capture.counts["rescan"] == rescans
+
+
+async def test_check_fresh_skips_a_column_that_is_capturing(stack, tmp_path, quick_fresh, monkeypatch):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    stream_dir = tmp_path / "fresh3"
+    await cap.start(LIVE_ID, stream_dir)
+    await wait_until(lambda: len(dom_pairs(stream_dir / "comments.jsonl")) >= len(SEED), what="the seed")
+
+    async def no_read(*a, **kw):
+        raise AssertionError("a recently captured column must not be read again")
+
+    monkeypatch.setattr(browser, "read_in_background", no_read)
+    assert await cap.check_fresh(LIVE_ID) is False
+    assert await cap.check_fresh("another live") is False

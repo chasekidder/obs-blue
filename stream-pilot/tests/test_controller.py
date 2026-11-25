@@ -2051,3 +2051,132 @@ async def test_ssn_stalled_refresh_failure_is_logged_not_fatal(make, caplog):
     await rig.settle()
     assert rig.c.state == State.READY
     assert "Target closed" in caplog.text
+
+
+# ------------------------------------------------- stale comments column check
+
+
+class FreshCapture(FakeCapture):
+    """FakeCapture with the adapter's optional ``check_fresh(live_id)``."""
+
+    def __init__(self, *, fresh_raises=None, **kw):
+        super().__init__(**kw)
+        self._fresh = Script(fresh_raises)
+
+    async def check_fresh(self, live_id) -> bool:
+        self.calls.append(("capture.check_fresh", live_id))
+        try:
+            await self._gated("check_fresh")
+        except asyncio.CancelledError:
+            self.calls.append(("capture.check_fresh.cancelled",))
+            raise
+        self._fresh.raise_next()
+        return False
+
+
+def _fresh_checks(cap):
+    return [c for c in cap.calls if c[0] == "capture.check_fresh"]
+
+
+async def _live_with_clock(make, cap):
+    rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_live()
+
+    async def tick(advance=0.0, settle=True):
+        clock.t += advance
+        await rig.c.handle(Tick())
+        if settle:
+            await rig.settle()
+        else:
+            await asyncio.sleep(0)
+
+    return rig, tick
+
+
+async def test_fresh_check_runs_every_interval_while_live(make):
+    cap = FreshCapture()
+    rig, tick = await _live_with_clock(make, cap)
+    interval = controller_mod.FRESH_CHECK_S
+    await tick()  # first live tick: only schedules
+    await tick(interval - 1)
+    assert _fresh_checks(cap) == []
+    await tick(1)
+    assert _fresh_checks(cap) == [("capture.check_fresh", rig.c.live_id)]
+    await tick(interval - 1)
+    assert len(_fresh_checks(cap)) == 1
+    await tick(1)
+    assert len(_fresh_checks(cap)) == 2
+
+
+async def test_fresh_check_not_without_the_probe(make):
+    rig, tick = await _live_with_clock(make, FakeCapture())
+    await tick()
+    await tick(controller_mod.FRESH_CHECK_S * 3)
+    assert not [c for c in rig.capture.calls if c[0] == "capture.check_fresh"]
+
+
+async def test_fresh_check_only_one_at_a_time(make):
+    cap = FreshCapture()
+    rig, tick = await _live_with_clock(make, cap)
+    cap.gates["check_fresh"] = asyncio.Event()  # the check hangs
+    await tick()
+    await tick(controller_mod.FRESH_CHECK_S, settle=False)
+    await rig.wait_call(cap, "capture.check_fresh")
+    await tick(controller_mod.FRESH_CHECK_S, settle=False)
+    await tick(controller_mod.FRESH_CHECK_S, settle=False)
+    assert len(_fresh_checks(cap)) == 1
+    assert rig.c.state == State.LIVE
+    await rig.c.aclose()
+
+
+async def test_fresh_check_failure_never_reaches_the_controller(make, caplog):
+    cap = FreshCapture(fresh_raises=RuntimeError("page crashed"))
+    rig, tick = await _live_with_clock(make, cap)
+    await tick()
+    await tick(controller_mod.FRESH_CHECK_S)
+    assert len(_fresh_checks(cap)) == 1
+    assert rig.c.state == State.LIVE
+    assert "check_fresh failed" in caplog.text
+
+
+async def test_end_flow_cancels_a_running_fresh_check(make):
+    cap = FreshCapture()
+    rig, tick = await _live_with_clock(make, cap)
+    cap.gates["check_fresh"] = asyncio.Event()
+    await tick()
+    await tick(controller_mod.FRESH_CHECK_S, settle=False)
+    await rig.wait_call(cap, "capture.check_fresh")
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert ("capture.check_fresh.cancelled",) in cap.calls
+    assert cap.calls.index(("capture.check_fresh.cancelled",)) < cap.calls.index(("capture.stop",))
+
+
+async def test_fresh_check_schedule_restarts_for_a_new_live(make):
+    cap = FreshCapture()
+    rig, tick = await _live_with_clock(make, cap)
+    await tick()
+    await tick(controller_mod.FRESH_CHECK_S)
+    assert len(_fresh_checks(cap)) == 1
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    cap.calls.clear()
+    await tick()  # a new live: the first tick only schedules
+    await tick(controller_mod.FRESH_CHECK_S - 1)
+    assert _fresh_checks(cap) == []
+    await tick(1)
+    assert len(_fresh_checks(cap)) == 1
+
+
+async def test_no_fresh_check_while_reconnecting(make):
+    cap = FreshCapture()
+    rig, tick = await _live_with_clock(make, cap)
+    await tick()
+    rig.c.state = State.RECONNECTING
+    await tick(controller_mod.FRESH_CHECK_S * 2)
+    assert _fresh_checks(cap) == []

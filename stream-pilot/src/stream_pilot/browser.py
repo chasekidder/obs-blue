@@ -23,6 +23,7 @@ handoff process is reaped by a background task.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import posixpath
@@ -56,6 +57,21 @@ _POLL_S = 0.2
 _IGNORED_SCHEMES = ("chrome-extension://", "devtools://")
 # Never adopt these as "the window we just opened": a failed-to-load extension page is chrome-error://.
 _NOT_ADOPTABLE_SCHEMES = _IGNORED_SCHEMES + ("chrome-error://",)
+
+# Marks the tabs read_in_background opens (one number per tab).
+_READ_MARKER = "stream-pilot-read"
+_READ_IDS = itertools.count(1)
+_HEAVY_RESOURCE_TYPES = frozenset({"media", "image", "font"})
+_VIDEO_CDN_RE = re.compile(r"^https?://video[^/]*\.fbcdn\.net/", re.I)
+
+
+async def _abort_heavy(route: Any) -> None:
+    req = route.request
+    if req.resource_type in _HEAVY_RESOURCE_TYPES or _VIDEO_CDN_RE.match(req.url):
+        await route.abort()
+    else:
+        await route.continue_()
+
 
 # Background reapers for spawned handoff processes (never leave a zombie).
 _REAPERS: set[asyncio.Task] = set()
@@ -332,10 +348,56 @@ class CdpBrowser:
         """First ordinary page of the context (not an extension/devtools page or the popout); created if none."""
         for page in self._open_pages():
             url = page.url or ""
-            if url.startswith(_IGNORED_SCHEMES) or page in self.popout_pages:
+            if url.startswith(_IGNORED_SCHEMES) or page in self.popout_pages or page in self._helper_pages:
                 continue
             return page
         return await self.context.new_page()
+
+    async def read_in_background(
+        self, url: str, script: str, *, ready_selector: str, timeout_s: float, settle_s: float = 1.5
+    ) -> Any:
+        """Load ``url`` in a new background tab, return ``script`` evaluated there, close the tab.
+
+        Waits for ``ready_selector``, then until the number of matches stayed the
+        same for ``settle_s`` (pages render lists in chunks), at most ``timeout_s``
+        in all; then evaluates anyway.
+        Media, images, fonts and video CDN requests are aborted, so the tab costs
+        little next to the stream. The tab is never taken as the dashboard, a
+        popout or an adopted window, and is closed even when something fails.
+        """
+        session = await self._browser_session()
+        marker = f"#{_READ_MARKER}-{next(_READ_IDS)}"
+        await session.send("Target.createTarget", {"url": "about:blank" + marker, "background": True})
+        page = await self._wait_for_page("about:blank", self.fallback_wait_s, contains=marker)
+        if page is None:
+            raise BrowserError("the background tab did not show up")
+        self._helper_pages.append(page)
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout_s
+            await page.route("**/*", _abort_heavy)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+            try:
+                await page.wait_for_selector(ready_selector, timeout=timeout_s * 1000)
+            except Exception as exc:  # Playwright's TimeoutError: nothing matched (yet)
+                log.debug("background read: %s not found: %r", ready_selector, exc)
+            else:
+                count, stable_since = -1, loop.time()
+                while loop.time() < deadline:
+                    n = await page.locator(ready_selector).count()
+                    if n != count:
+                        count, stable_since = n, loop.time()
+                    elif loop.time() - stable_since >= settle_s:
+                        break
+                    await asyncio.sleep(min(0.25, settle_s))
+            return await page.evaluate(script)
+        finally:
+            try:
+                await asyncio.wait_for(page.close(), CLOSE_TIMEOUT_S)
+            except Exception as exc:
+                log.warning("closing the background tab failed: %r", exc)
+            if page in self._helper_pages:
+                self._helper_pages.remove(page)
 
     async def find_page(
         self, url_prefix: str | None = None, *, contains: str | None = None
