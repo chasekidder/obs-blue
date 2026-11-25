@@ -198,6 +198,10 @@ If `[claim_highlight]` is on: comments shaped like claims (`21 cookie sheets 3`,
 
 If `[deck_warnings]` is on: mute the Microphone in OBS for 35 s while live: the spare key shows `MIC?` (journal: `deck warning: MIC?`), and the warning clears after unmuting. Unplug the main camera briefly while the key is green: `CAM?` within 10 s.
 
+If `[diagnostics]` is on: while live, `systemctl --user list-units 'stream-pilot-diag@*'` shows one active unit and `~/streams/<stream>/diag/obs.jsonl` grows every 2 s. After the end, the folder has `journal-user.txt`, `journal-system.txt`, the OBS log and `summary.txt`.
+
+Comments column check (always on): while live and no new comment was captured for 90 s, the controller compares the column with a fresh copy of the live's comments in a hidden tab (journal: `comments column is up to date (N comment(s) on Facebook)`). If Facebook shows comments the column never delivered, it reloads the column (journal: `comments column missed ...; reloading it`). Post a comment from your phone after a quiet minute and check that it reaches the column.
+
 ### 6. End with a long-press
 
 1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.

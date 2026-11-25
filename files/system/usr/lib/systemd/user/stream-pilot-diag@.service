@@ -1,0 +1,20 @@
+[Unit]
+Description=stream-pilot diagnostics of the live in %f
+# Started and stopped by stream-pilot ([diagnostics] enabled). It must never take
+# time from OBS, Chromium or the controller: idle CPU and I/O priority, a CPU
+# quota and a memory cap; the kernel kills it first if memory runs out.
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/stream-pilot diag %f
+# On SIGTERM it stops sampling, then exports the journals and writes summary.txt.
+TimeoutStopSec=90
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+CPUWeight=1
+IOWeight=1
+CPUQuota=15%
+MemoryHigh=192M
+MemoryMax=256M
+OOMScoreAdjust=1000

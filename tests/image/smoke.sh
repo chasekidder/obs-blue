@@ -114,6 +114,13 @@ grep -qx "ExecStart=/usr/bin/stream-pilot record %f" "$rec"
 grep -qx "KillSignal=SIGINT" "$rec"
 grep -qx "KillMode=mixed" "$rec"
 stream-pilot record --help > /dev/null
+diag=$units/stream-pilot-diag@.service
+test -f "$diag"
+grep -qx "ExecStart=/usr/bin/stream-pilot diag %f" "$diag"
+grep -qx "CPUSchedulingPolicy=idle" "$diag"
+grep -qx "IOSchedulingClass=idle" "$diag"
+grep -qx "MemoryMax=256M" "$diag"
+stream-pilot diag --help > /dev/null
 test -f "$units/stream-pilot-upload.timer"
 grep -qx "ExecStart=/usr/bin/stream-pilot upload" "$units/stream-pilot-upload.service"
 grep -qx "IOSchedulingClass=idle" "$units/stream-pilot-upload.service"

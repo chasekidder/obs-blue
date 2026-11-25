@@ -149,3 +149,16 @@ net_window_s = 20
 # congestion was above net_congestion (0..1); NET shows when most of the window is bad.
 net_skipped_pct = 1.0
 net_congestion = 0.3
+
+[diagnostics]
+# Detailed measurements of every live into <stream folder>/diag/ (OBS frame
+# counters, network and Wi-Fi, CPU/memory per process, temperatures, journals,
+# summary.txt) by a separate low-priority collector (stream-pilot-diag@.service).
+enabled = false
+obs_s = 2
+network_s = 5
+system_s = 10
+gateway_s = 60
+# The router's status JSON (T-Mobile 5G gateway: "http://192.168.12.1/TMI/v1/gateway?get=all");
+# empty: not polled.
+gateway_status_url = ""

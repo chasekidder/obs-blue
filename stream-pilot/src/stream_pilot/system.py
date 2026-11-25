@@ -42,6 +42,10 @@ class SystemCtl:
     async def stop_user_unit(self, unit: str) -> None:
         await _run(self._exec, ["systemctl", "--user", "stop", unit])
 
+    async def stop_user_unit_no_block(self, unit: str) -> None:
+        """Queue the stop and return: the unit may take a while to finish."""
+        await _run(self._exec, ["systemctl", "--user", "stop", "--no-block", unit])
+
     async def start_user_unit(self, unit: str) -> bool:
         return await _run(self._exec, ["systemctl", "--user", "start", unit]) == 0
 

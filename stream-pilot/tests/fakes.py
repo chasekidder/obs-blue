@@ -525,6 +525,10 @@ class FakeSystem(Gated):
         else:
             self.active_units.discard(unit)
 
+    async def stop_user_unit_no_block(self, unit: str) -> None:
+        self.calls.append(("system.stop_user_unit_no_block", unit))
+        self.active_units.discard(unit)
+
     async def start_user_unit(self, unit: str) -> bool:
         self.calls.append(("system.start_user_unit", unit))
         await self._gated("start_user_unit")

@@ -17,3 +17,4 @@ stream-pilot/.venv/
 # bootc-image-builder output and rendered kickstart config (contains secrets)
 output/
 iso/config.toml
+stream-pilot/uv.lock

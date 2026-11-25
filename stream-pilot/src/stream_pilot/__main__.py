@@ -204,6 +204,18 @@ def cmd_record(args: argparse.Namespace) -> int:
     return run_recorder(Path(args.stream_dir), cfg.audio, cfg.recording)
 
 
+def cmd_diag(args: argparse.Namespace) -> int:
+    """stream-pilot-diag@.service (user): measurements of a live into <stream_dir>/diag/."""
+    from .diagnostics import run_collector
+
+    try:
+        cfg = _load_config()
+    except Exception:
+        log.exception("diag: cannot load config")
+        return 1
+    return run_collector(Path(args.stream_dir), cfg)
+
+
 def cmd_upload(_args: argparse.Namespace) -> int:
     """stream-pilot-upload.service (user, from its timer): copy the stream folders off the PC."""
     from .upload import Uploader, run_lock
@@ -330,6 +342,11 @@ def build_parser() -> argparse.ArgumentParser:
             "record the microphone into STREAM_DIR/audio/ until SIGINT (run by "
             "stream-pilot-recorder@.service)",
         ),
+        "diag": (
+            cmd_diag,
+            "collect measurements of a live into STREAM_DIR/diag/ until SIGTERM (run by "
+            "stream-pilot-diag@.service)",
+        ),
         "upload": (
             cmd_upload,
             "copy the stream folders, status and failure snapshots to [upload] target "
@@ -380,6 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Chromium executable (default: cdp.chromium_bin from the config)",
     )
     parsers["record"].add_argument("stream_dir", metavar="STREAM_DIR")
+    parsers["diag"].add_argument("stream_dir", metavar="STREAM_DIR")
     parsers["rebalance"].add_argument(
         "--camera", default=None, metavar="NAME",
         help="camera name from the config (default: [wb_freeze] camera)",

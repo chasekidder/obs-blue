@@ -29,6 +29,7 @@ from .config import Config
 from .controller import Controller
 from .deck import StreamDeckAdapter
 from .deck_warnings import DeckWarnings
+from .diagnostics import Diagnostics
 from .events import DeckPress, ObsConnected, RetryRequested, Tick
 from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .features import Feature, describe
@@ -172,6 +173,7 @@ def build_features(
         WbFreeze(cfg, obs=obs),
         AudioFilters(cfg, obs=obs),
         DeckWarnings(cfg, obs=obs, deck=deck),
+        Diagnostics(cfg, system=system),
     ]
 
 

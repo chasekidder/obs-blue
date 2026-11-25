@@ -181,3 +181,15 @@ session_id = ""
 #net_window_s = 20
 #net_skipped_pct = 1.0
 #net_congestion = 0.3
+
+#[diagnostics]
+# Detailed measurements of every live into ~/streams/<stream>/diag/ by a separate
+# low-priority collector, plus summary.txt when the stream stops. For reviewing
+# the first streams; turn it off afterwards.
+#enabled = true
+#obs_s = 2
+#network_s = 5
+#system_s = 10
+#gateway_s = 60
+# T-Mobile 5G gateway's status page (signal); leave empty for other routers.
+#gateway_status_url = "http://192.168.12.1/TMI/v1/gateway?get=all"

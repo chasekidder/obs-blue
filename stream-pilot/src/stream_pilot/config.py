@@ -142,6 +142,16 @@ class DeckWarningsCfg:
 
 
 @dataclass(frozen=True)
+class DiagnosticsCfg:
+    enabled: bool
+    obs_s: float
+    network_s: float
+    system_s: float
+    gateway_s: float
+    gateway_status_url: str
+
+
+@dataclass(frozen=True)
 class MemoryCfg:
     interval_s: int
     floor_mb: int
@@ -178,7 +188,7 @@ class PathsCfg:
 # (shipped off, except ssn) and is listed by `stream-pilot status`.
 FEATURE_SECTIONS: tuple[str, ...] = (
     "ssn", "recording", "upload", "holding", "branding", "wb_freeze", "audio_filters",
-    "claim_highlight", "deck_warnings",
+    "claim_highlight", "deck_warnings", "diagnostics",
 )
 
 
@@ -202,6 +212,7 @@ class Config:
     audio_filters: AudioFiltersCfg
     claim_highlight: ClaimHighlightCfg
     deck_warnings: DeckWarningsCfg
+    diagnostics: DiagnosticsCfg
 
     def features(self) -> dict[str, bool]:
         """Every feature switch (``[<name>] enabled``), in FEATURE_SECTIONS order."""
@@ -304,6 +315,7 @@ def load_config(paths: list[Path]) -> Config:
         "audio_filters": AudioFiltersCfg,
         "claim_highlight": ClaimHighlightCfg,
         "deck_warnings": DeckWarningsCfg,
+        "diagnostics": DiagnosticsCfg,
     }
     for key in data:
         if key not in sections and key != "cameras":
