@@ -180,7 +180,7 @@ If `[upload]` is on as well:
 
 If `[holding]` is on:
 
-1. While the key is green, OBS shows "Program: Holding" (the "Starting soon" card) above "Preview: Main Camera" (studio mode), or "Starting Soon" with the camera and a banner (banner mode). The audio mixer's Microphone meter is marked "Preview" (not on air).
+1. While the key is green, OBS shows "Preview: Main Camera" beside "Program: Holding" (the "Starting soon" card; studio mode), or "Starting Soon" with the camera and a banner (banner mode). The audio mixer's Microphone meter is marked "Preview" (not on air).
 2. A camera key before Go Live changes the preview only. After Go Live, once the key is red, the chosen camera is on air and Studio Mode is off.
 3. The replay starts with a few seconds of the card (Facebook starts the live about 3 s after the press, the camera goes on air about 8 s after it).
 
