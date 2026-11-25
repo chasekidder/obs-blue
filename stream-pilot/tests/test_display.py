@@ -3,11 +3,15 @@ import json
 from stream_pilot.display import mirror_args, run_display_mirror
 
 
-def out(id_, name, *, enabled=True, connected=True, priority=0, source=0, x=0, y=0):
-    return {
+def out(id_, name, *, enabled=True, connected=True, priority=0, source=0, x=0, y=0, native=None):
+    o = {
         "id": id_, "name": name, "enabled": enabled, "connected": connected,
         "priority": priority, "replicationSource": source, "pos": {"x": x, "y": y},
     }
+    if native:
+        o.update(modes=[{"id": "1", "size": {"width": native[0], "height": native[1]}}],
+                 preferredModes=["1"], currentModeId="1")
+    return o
 
 
 def test_extended_displays_are_mirrored_onto_the_primary_at_the_origin():
@@ -77,3 +81,32 @@ def test_the_loop_applies_mirroring_only_when_needed_and_survives_errors():
 def test_a_replica_of_the_wrong_source_is_repointed():
     outputs = [out(1, "A", priority=1), out(2, "B", source=3), out(3, "C", source=0, priority=2)]
     assert mirror_args(outputs) == ["output.B.mirror.A", "output.C.mirror.A"]
+
+
+KVM, DELL = (1920, 1080), (1600, 900)
+
+
+def test_the_largest_display_is_the_source_even_after_it_came_back():
+    # Seen in situ: the NanoKVM's HDMI dropped for a moment; when it came back the Dell
+    # (1600x900) was the source, the desktop stayed 1600x900 and OBS no longer fit.
+    outputs = [out(1, "HDMI-A-2", priority=2, source=2, native=KVM),
+               out(2, "HDMI-A-1", priority=1, native=DELL)]
+    assert mirror_args(outputs) == ["output.HDMI-A-2.mirror.none", "output.HDMI-A-1.mirror.HDMI-A-2"]
+
+
+def test_the_kvm_as_source_with_the_monitor_mirroring_needs_nothing():
+    outputs = [out(1, "HDMI-A-2", priority=1, native=KVM),
+               out(2, "HDMI-A-1", priority=2, source=1, native=DELL)]
+    assert mirror_args(outputs) == []
+
+
+def test_a_freshly_connected_larger_display_becomes_the_source():
+    outputs = [out(2, "HDMI-A-1", priority=1, native=DELL), out(1, "HDMI-A-2", native=KVM)]
+    assert mirror_args(outputs) == ["output.HDMI-A-1.mirror.HDMI-A-2"]
+
+
+def test_a_disabled_kvm_coming_back_becomes_the_source_in_one_pass():
+    # In situ: the KVM's output came back disabled while the Dell was the only display.
+    outputs = [out(1, "HDMI-A-2", priority=2, enabled=False, native=KVM),
+               out(2, "HDMI-A-1", priority=1, native=DELL)]
+    assert mirror_args(outputs) == ["output.HDMI-A-2.enable", "output.HDMI-A-1.mirror.HDMI-A-2"]

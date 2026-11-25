@@ -562,6 +562,11 @@ class FakeCamera(Gated):
         await self._gated("set_autofocus")
         self._raises.raise_next()
 
+    async def set_macro(self, device: str) -> None:
+        self.calls.append(("camera.set_macro", device))
+        await self._gated("set_macro")
+        self._raises.raise_next()
+
 
 __all__ = [
     "ObsModel",

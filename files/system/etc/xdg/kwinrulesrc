@@ -1,7 +1,8 @@
-# stream-pilot window layout. The geometry below assumes a 1920x1080 screen with
-# the default bottom panel, which leaves a 1920x1034 work area: OBS fills the left
-# 70% (1344x1034), the Facebook comments popout is the right 30% column (576x1034).
-# stream-pilot's config has no override for this.
+# stream-pilot window rules. Position and size come from the streampilotlayout KWin
+# script (/usr/share/kwin/scripts/streampilotlayout): OBS the left 70% of the work
+# area, the Facebook windows the right 30%, at whatever size the screen is. Fixed
+# pixel geometry here assumed a 1920x1080 desktop; in situ it sometimes became the
+# monitor's 1600x900 and OBS overflowed the screen. These rules keep the rest.
 #
 # Installed as an XDG default (/etc/xdg/kwinrulesrc); KWin reads kwinrulesrc through
 # KSharedConfig::openConfig, so a user's ~/.config/kwinrulesrc cascades over it.
@@ -10,9 +11,9 @@
 # wmclassmatch/titlematch 1 = exact, 2 = substring; types=1 is NET::NormalMask (normal
 # windows). On Wayland OBS's dialogs (Settings, Properties, Confirm Changes) are normal
 # windows too, so the OBS rule also matches the main window's title ("OBS <version>
-# - Profile: ..."); otherwise every dialog is forced to the main window's geometry; decorationpolicy=none replaces
-# the deprecated noborder key; [General] Order replaces the legacy count/rules keys
-# (KWin 6.8 migrates those by rewriting the user's config on first load).
+# - Profile: ..."); decorationpolicy=none replaces the deprecated noborder key;
+# [General] Order replaces the legacy count/rules keys (KWin 6.8 migrates those by
+# rewriting the user's config on first load).
 [General]
 Order=1,2,4,3
 
@@ -24,10 +25,6 @@ wmclassmatch=1
 title=- Profile:
 titlematch=2
 types=1
-position=0,0
-positionrule=2
-size=1344,1034
-sizerule=2
 decorationpolicy=none
 decorationpolicyrule=2
 above=false
@@ -38,10 +35,6 @@ Description=stream-pilot: Facebook comments column (right)
 wmclass=chrome-www.facebook.com__live_producer
 wmclasscomplete=false
 wmclassmatch=2
-position=1344,0
-positionrule=2
-size=576,1034
-sizerule=2
 decorationpolicy=none
 decorationpolicyrule=2
 above=true
@@ -54,19 +47,15 @@ skipswitcher=true
 skipswitcherrule=2
 
 # The main browser window (producer setup, Facebook login) gets the same right column as
-# the comments column, so it never covers OBS: the host stages the scene in OBS before
-# going live. Once live, the comments column (always on top) covers it. Matched exactly:
-# --app windows have their own chrome-<host>__<path> class.
+# the comments column (from the layout script), so it never covers OBS: the host stages
+# the scene in OBS before going live. Once live, the comments column (always on top)
+# covers it. Matched exactly: --app windows have their own chrome-<host>__<path> class.
 [4]
 Description=stream-pilot: Chromium main window right column
 wmclass=chromium-browser
 wmclasscomplete=false
 wmclassmatch=1
 types=1
-position=1344,0
-positionrule=2
-size=576,1034
-sizerule=2
 maximizehoriz=false
 maximizehorizrule=2
 maximizevert=false

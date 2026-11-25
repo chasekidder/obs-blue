@@ -1,5 +1,9 @@
 [Plugins]
 streampilotobsdialogsEnabled=true
+streampilotlayoutEnabled=true
+# Screen magnifier (Meta + wheel / Meta + =): blows the whole screen up past its
+# edges, never wanted on the stream PC.
+zoomEnabled=false
 blurEnabled=false
 slidingpopupsEnabled=false
 translucencyEnabled=false

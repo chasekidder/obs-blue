@@ -256,6 +256,25 @@ async def test_v4l2_autofocus_off_argv():
     ]
 
 
+async def test_v4l2_macro_turns_autofocus_off_then_focuses_closest():
+    from pathlib import Path
+
+    ex = FakeExec(stdout=(Path(__file__).parent / "data" / "v4l2-c920-ctrls.txt").read_bytes())
+    await V4l2Camera(exec_fn=ex).set_macro("/dev/video0")
+    assert ex.calls == [
+        ["v4l2-ctl", "-d", "/dev/video0", "--set-ctrl=focus_automatic_continuous=0"],
+        ["v4l2-ctl", "-d", "/dev/video0", "-l"],
+        ["v4l2-ctl", "-d", "/dev/video0", "--set-ctrl=focus_absolute=250"],
+    ]
+
+
+async def test_v4l2_macro_without_a_focus_range_is_logged(caplog):
+    ex = FakeExec(stdout=b"brightness 0x00980900 (int) : min=0 max=255\n")
+    await V4l2Camera(exec_fn=ex).set_macro("/dev/video0")
+    assert len(ex.calls) == 2
+    assert "no focus_absolute range" in caplog.text
+
+
 @pytest.mark.parametrize("out, want", [
     (b"focus_automatic_continuous: 1\n", True),
     (b"focus_automatic_continuous: 0\n", False),

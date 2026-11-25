@@ -1127,15 +1127,33 @@ async def test_jewelry_camera_key_and_scene_order(rig):
     assert rig.deck.faces[2].bg == "#333333"
 
 
-async def test_autofocus_key_toggles_on_active_camera(rig):
+async def test_autofocus_key_toggles_macro_on_active_camera(rig):
     await rig.c.boot()
     await rig.c.handle(DeckPress(5))
     await rig.c.handle(DeckPress(1))
-    assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video2", False)
-    assert rig.deck.faces[1] == KeyFace("AF\nOFF", "#555555")
+    assert rig.camera.calls[-1] == ("camera.set_macro", "/dev/video2")
+    assert rig.deck.faces[1] == KeyFace("MACRO", "#7b3fbf")
     await rig.c.handle(DeckPress(1))
     assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video2", True)
     assert rig.deck.faces[1] == KeyFace("AF\nON", "#1e9e3e")
+
+
+async def test_a_camera_key_leaves_macro_for_autofocus(rig):
+    await rig.c.boot()
+    await rig.c.handle(DeckPress(2))
+    await rig.c.handle(DeckPress(1))
+    assert rig.deck.faces[1].label == "MACRO"
+    await rig.c.handle(DeckPress(2))
+    assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video0", True)
+    assert rig.deck.faces[1].label == "AF\nON"
+
+
+async def test_failed_macro_keeps_the_face(rig):
+    await rig.c.boot()
+    await rig.c.handle(DeckPress(2))
+    rig.camera._raises = Script(RuntimeError("v4l2-ctl failed"))
+    await rig.c.handle(DeckPress(1))
+    assert rig.deck.faces[1].label == "AF\nON"
 
 
 async def test_autofocus_key_without_active_camera_uses_current_scene(make):
@@ -1170,8 +1188,8 @@ async def test_first_autofocus_press_toggles_the_real_state(make):
     rig = make(camera=FakeCamera(autofocus={"/dev/video0": True}))
     await rig.to_ready()
     await rig.c.handle(DeckPress(1))
-    assert rig.camera.calls[-1] == ("camera.set_autofocus", "/dev/video0", False)
-    assert rig.deck.faces[1] == KeyFace("AF\nOFF", "#555555")
+    assert rig.camera.calls[-1] == ("camera.set_macro", "/dev/video0")
+    assert rig.deck.faces[1] == KeyFace("MACRO", "#7b3fbf")
 
 
 async def test_connect_with_non_camera_scene_marks_no_camera(make):

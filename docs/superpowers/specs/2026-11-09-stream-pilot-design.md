@@ -67,7 +67,7 @@ stream-pilot keeps its state (state name, live ID, stream folder) in `~/.local/s
   - `/etc/chromium/policies/managed/stream-pilot.json`
   - `/etc/stream-pilot/config.toml` (non-secret defaults)
   - `/usr/share/stream-pilot/obs/` (default OBS profile and scene collection)
-  - `/etc/xdg/kwinrulesrc` (window placement)
+  - `/etc/xdg/kwinrulesrc` (window rules) and the `streampilotlayout` KWin script (OBS the left 70% of the screen, the Facebook windows the right 30%, at any screen size; KWin's Zoom effect is off)
   - `stream-pilot-display-mirror.service` (user): every connected display mirrors the primary one at 0,0 (Plasma extends the desktop onto a new output, but the layout assumes one 1920x1080 screen, and the host's display and the NanoKVM must show the same picture). It re-applies mirroring with `kscreen-doctor` within a few seconds of any change.
   - `/etc/xdg/` overrides that trim Plasma (see the memory plan)
   - `/etc/xdg/` defaults that turn off the lock screen, screen energy saving (blanking/DPMS), automatic sleep, and notification popups
@@ -223,11 +223,11 @@ A press always ends in a power-off, even if stream-pilot is down or hung: `strea
 
 | | Col 1 | Col 2 | Col 3 |
 |---|---|---|---|
-| Row 1 | Status / Go Live | Autofocus toggle | Main Cam |
+| Row 1 | Status / Go Live | Autofocus / Macro | Main Cam |
 | Row 2 | Retry setup | (spare) | Jewelry Cam |
 
 - **Camera keys** switch the OBS scene and enable continuous autofocus on that camera's by-id device with `v4l2-ctl`, matching the current Companion behavior.
-- **Autofocus key** toggles autofocus on the active camera and shows its state.
+- **Autofocus key** toggles the active camera between continuous autofocus (`AF ON`) and macro (`MACRO`: autofocus off, focus at its closest, for showing small items up close; on the C920 that is `focus_absolute` 250, its maximum). A camera key returns that camera to autofocus.
 - **Retry key** works in any state except `LIVE` and `GOING_LIVE`.
 - **Spare key** shows `MEM` when the memory guard warns (with `[deck_warnings]` on also `MIC?`, `CAM?` and `NET`; see `2026-11-24-07-seller.md`).
 

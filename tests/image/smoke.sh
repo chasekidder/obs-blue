@@ -143,6 +143,14 @@ grep -qx "OnCalendar=" /usr/lib/systemd/system/rpm-ostreed-automatic.timer.d/zz-
 grep -qx "CPUWeight=idle" /usr/lib/systemd/system/rpm-ostreed.service.d/90-stream-pilot-low-priority.conf
 grep -qx "SampleRate=48000" /usr/share/stream-pilot/obs/basic/profiles/FB_Live/basic.ini
 test -f /etc/xdg/kwinrulesrc
+python3 -m json.tool /usr/share/kwin/scripts/streampilotlayout/metadata.json > /dev/null
+test -f /usr/share/kwin/scripts/streampilotlayout/contents/code/main.js
+grep -qx "streampilotlayoutEnabled=true" /etc/xdg/kwinrc
+grep -qx "zoomEnabled=false" /etc/xdg/kwinrc
+if grep -qE "^(position|size)rule=" /etc/xdg/kwinrulesrc; then
+  echo "kwinrulesrc must not force geometry (the streampilotlayout script sizes from the screen)" >&2
+  exit 1
+fi
 grep -q "kde-authorized remote-desktop com.rustdesk.RustDesk yes" /etc/xdg/autostart/com.rustdesk.RustDesk.desktop
 grep -qx "Enabled=false" /etc/xdg/kwalletrc
 grep -q -- "--password-store=basic" /usr/libexec/stream-pilot/chromium-launch

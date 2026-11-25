@@ -1,0 +1,11 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Description": "Places OBS in the left 70% of the screen and the Facebook windows in the right 30%, at any screen size",
+        "EnabledByDefault": true,
+        "Id": "streampilotlayout",
+        "License": "Apache-2.0",
+        "Name": "stream-pilot: window layout"
+    },
+    "X-Plasma-API": "javascript"
+}

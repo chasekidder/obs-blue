@@ -10,6 +10,7 @@ a failed autofocus tweak or unit stop must not crash the controller.
 
 import asyncio
 import logging
+import re
 import subprocess
 from typing import Any, Callable
 
@@ -80,6 +81,28 @@ class V4l2Camera:
             self._exec,
             ["v4l2-ctl", "-d", device, f"--set-ctrl=focus_automatic_continuous={value}"],
         )
+
+    async def set_macro(self, device: str) -> None:
+        """Continuous autofocus off, then focus at the camera's closest point: the
+        largest ``focus_absolute`` (on the C920 0 is far and 250 is closest, measured
+        2026-11-25). The value can only be written once autofocus is off."""
+        await _run(self._exec, ["v4l2-ctl", "-d", device, "--set-ctrl=focus_automatic_continuous=0"])
+        closest = await self._focus_max(device)
+        if closest is None:
+            log.warning("%s has no focus_absolute range; macro focus not set", device)
+            return
+        await _run(self._exec, ["v4l2-ctl", "-d", device, f"--set-ctrl=focus_absolute={closest}"])
+
+    async def _focus_max(self, device: str) -> int | None:
+        argv = ["v4l2-ctl", "-d", device, "-l"]
+        try:
+            proc = await self._exec(*argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            out, _ = await proc.communicate()
+        except OSError as e:
+            log.warning("cannot run %s: %s", argv, e)
+            return None
+        m = re.search(r"^\s*focus_absolute .*\bmax=(\d+)", out.decode(errors="replace"), re.M)
+        return int(m.group(1)) if m else None
 
     async def get_autofocus(self, device: str) -> bool | None:
         """Continuous autofocus on/off, or None if it can't be read."""

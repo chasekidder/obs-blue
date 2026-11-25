@@ -109,6 +109,7 @@ _FACE_RETRY = KeyFace("RETRY", "#333333")
 _FACE_SPARE = KeyFace("", "#000000")
 _FACE_AF_ON = KeyFace("AF\nON", "#1e9e3e")
 _FACE_AF_OFF = KeyFace("AF\nOFF", "#555555")
+_FACE_MACRO = KeyFace("MACRO", "#7b3fbf")
 _CAMERA_KEYS = {2: "main", 5: "jewelry"}
 _CAMERA_FACES = {"main": "MAIN\nCAM", "jewelry": "JEWEL\nCAM"}
 _CAMERA_IDLE_BG = "#333333"
@@ -171,6 +172,7 @@ class Controller:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._active_camera: str | None = None
         self._autofocus: dict[str, bool] = {}
+        self._macro: set[str] = set()  # cameras put in macro by the autofocus key
         # None: no end flow in progress; "end": long-press end flow before its
         # branch point; "power": a power-off is in progress (further presses ignored).
         self._end_mode: str | None = None
@@ -1098,8 +1100,13 @@ class Controller:
             self._show(key, KeyFace(_CAMERA_FACES[cam], bg))
 
     def _show_autofocus(self) -> None:
-        on = self._active_camera is not None and self._autofocus.get(self._active_camera, False)
-        self._show(1, _FACE_AF_ON if on else _FACE_AF_OFF)
+        cam = self._active_camera
+        if cam is not None and self._autofocus.get(cam, False):
+            self._show(1, _FACE_AF_ON)
+        elif cam is not None and cam in self._macro:
+            self._show(1, _FACE_MACRO)
+        else:
+            self._show(1, _FACE_AF_OFF)
 
     async def _camera_press(self, cam: str) -> None:
         cfg = self.cfg.cameras.get(cam)
@@ -1123,6 +1130,7 @@ class Controller:
                 "set_autofocus", self.camera.set_autofocus(cfg.device, True)
             )
             self._autofocus[cam] = True
+            self._macro.discard(cam)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1131,6 +1139,8 @@ class Controller:
         self._show_autofocus()
 
     async def _autofocus_press(self) -> None:
+        """Toggle the active camera between continuous autofocus and macro (autofocus
+        off, focus at its closest), for holding small items up to the lens."""
         cam = self._active_camera
         if cam is None:
             cam = await self._camera_from_scene()
@@ -1138,18 +1148,25 @@ class Controller:
         if cfg is None:
             log.warning("no camera %r configured", cam)
             return
-        want = not self._autofocus.get(cam, False)
+        macro = self._autofocus.get(cam, False)
         try:
-            await self._bounded(
-                "set_autofocus", self.camera.set_autofocus(cfg.device, want)
-            )
+            if macro:
+                await self._bounded("set_macro", self.camera.set_macro(cfg.device))
+            else:
+                await self._bounded(
+                    "set_autofocus", self.camera.set_autofocus(cfg.device, True)
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("autofocus toggle on %s failed", cfg.device)
+            log.exception("%s on %s failed", "macro" if macro else "autofocus", cfg.device)
             return
         self._active_camera = cam
-        self._autofocus[cam] = want
+        self._autofocus[cam] = not macro
+        if macro:
+            self._macro.add(cam)
+        else:
+            self._macro.discard(cam)
         self._show_camera_faces()
         self._show_autofocus()
 
