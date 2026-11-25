@@ -386,7 +386,7 @@ class Controller:
         if self.state in _NO_RETRY:
             log.info("retry ignored in %s", self.state)
             return
-        await self._start_flow(lambda: self._setup_flow("LOGIN"))
+        await self._start_flow(lambda: self._setup_flow("LOGIN"), enter=State.STARTING)
 
     async def _go_live_pressed(self) -> None:
         if self.dry_run:

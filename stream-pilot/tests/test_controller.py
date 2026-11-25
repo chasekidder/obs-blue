@@ -509,6 +509,20 @@ async def test_retry_from_error_reruns_setup_from_login(make, event):
     assert "obs.connect" not in rig.names(rig.obs)  # already connected
 
 
+@pytest.mark.parametrize("event", [DeckPress(3), RetryRequested()])
+async def test_retry_from_ready_leaves_go_live_at_once(rig, event):
+    # the SSN refresh before the login check takes ~15 s on the PC: the key must
+    # not stay green (and accept a Go Live press) meanwhile
+    await rig.to_ready()
+    await rig.c.handle(event)
+    assert rig.c.state == State.STARTING
+    assert rig.deck.faces[0] == STATUS_FACES[State.STARTING]
+    await rig.c.handle(DeckPress(0))
+    assert "fb.go_live" not in rig.names(rig.fb)
+    await rig.settle()
+    assert rig.c.state == State.READY
+
+
 async def test_retry_cancels_running_flow_and_restarts(make):
     rig = make(fb=FakeFacebook(logged_in=False))
     await rig.c.boot()
