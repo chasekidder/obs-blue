@@ -57,6 +57,10 @@ FAILURES_DIR = "_failures"
 SERVICE = "stream-pilot-upload.service"
 TIMER = "stream-pilot-upload.timer"
 SERVER_ALIVE_S = 5
+# One timer run copies for at most this long (a big backlog continues next run, from
+# rsync's partial files), so the live's folder is refreshed about every minute.
+RUN_BUDGET_S = 45.0
+_TERM_WAIT_S = 3.0
 _FINISHED = ("stream.json", "report.txt", JOURNAL)
 
 Runner = Callable[[list[str]], Awaitable[int]]
@@ -140,8 +144,13 @@ async def run_rsync(argv: list[str]) -> int:
         _, err = await proc.communicate()
     except BaseException:
         if proc.returncode is None:
-            proc.kill()
-            await proc.wait()
+            # SIGTERM first: rsync then keeps the partial file (--partial) for the next run.
+            proc.terminate()
+            try:
+                await asyncio.wait_for(asyncio.shield(proc.wait()), _TERM_WAIT_S)
+            except BaseException:
+                proc.kill()
+                await proc.wait()
         raise
     if proc.returncode != 0:
         tail = err.decode(errors="replace").strip().splitlines()[-3:]
@@ -288,16 +297,29 @@ class Uploader:
                      self.up.retention_days)
         return removed
 
-    async def run_all(self) -> int:
-        """One timer run. Returns 0 (problems are logged; the timer simply tries again)."""
+    async def run_all(self, budget_s: float | None = None) -> int:
+        """One timer run, at most ``budget_s`` (RUN_BUDGET_S). Returns 0: problems are
+        logged and the timer simply tries again."""
         problem = self.problem()
         if problem:
             log.warning("upload: %s; nothing copied", problem)
             return 0
-        await self.heartbeat()
-        for d in stream_folders(self.cfg.paths.streams_dir):
-            await self.upload_stream(d)
-        await self.failures()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (RUN_BUDGET_S if budget_s is None else budget_s)
+        steps: list[Callable[[], Awaitable[object]]] = [self.heartbeat]
+        steps += [lambda d=d: self.upload_stream(d)
+                  for d in stream_folders(self.cfg.paths.streams_dir)]
+        steps.append(self.failures)
+        for step in steps:
+            left = deadline - loop.time()
+            if left <= 0:
+                log.info("upload: this run's time is used up; the rest follows next run")
+                break
+            try:
+                await asyncio.wait_for(step(), left)
+            except TimeoutError:
+                log.info("upload: this run's time is used up; the rest follows next run")
+                break
         self.retention()
         return 0
 

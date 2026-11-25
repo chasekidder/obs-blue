@@ -307,8 +307,9 @@ class Controller:
         task.add_done_callback(self._feature_tasks.discard)
 
     async def _restore_disabled_features(self) -> None:
+        """At boot; features whose restore needs OBS get it on the OBS connect instead."""
         for f in self.features:
-            if not f.enabled:
+            if not f.enabled and not f.restore_needs_obs:
                 await run_hook(f, "restore", f.restore)
 
     def _on_obs_connected(self) -> None:

@@ -164,6 +164,7 @@ async def find_mic_input(obs: Any, mic_device: str) -> str | None:
 
 class AudioFilters(Feature):
     name = "audio_filters"
+    restore_needs_obs = True
 
     def __init__(self, cfg: Config, *, obs: Any):
         super().__init__(cfg.audio_filters.enabled)

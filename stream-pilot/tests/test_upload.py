@@ -414,3 +414,41 @@ async def test_worst_case_end_flow_with_recording_and_upload_hung(make, tmp_path
     assert ("system.poweroff",) in rig.system.calls
     assert time.monotonic() - started < (power_guard.GRACE_S - 15) * scale
     await rig.c.aclose()
+
+
+async def test_a_run_stops_at_its_budget_and_the_live_folder_goes_first(tmp_path):
+    cfg = cfg_for(tmp_path, tmp_path / "inbox")
+    fail = cfg.paths.failures_dir / "20261124-150000-setup"
+    fail.mkdir(parents=True)
+    (fail / "page.html").write_text("x")
+    old = stream(tmp_path, "2026-11-20_1500-1", done=True)
+    live = stream(tmp_path, "2026-11-24_1500-3")
+    order = []
+
+    async def slow(argv):
+        order.append(argv[-1])
+        if "_failures" in argv[-1]:
+            await asyncio.Event().wait()  # a huge backlog
+        return 0
+
+    started = time.monotonic()
+    assert await Uploader(cfg, run=slow).run_all(budget_s=0.3) == 0
+    assert time.monotonic() - started < 1.5
+    assert order[0].endswith(f"{live.name}/") and any(o.endswith(f"{old.name}/") for o in order)
+    assert order[-1].endswith("_failures/")
+
+
+@needs_rsync
+async def test_a_cut_off_copy_keeps_its_partial_file(tmp_path):
+    src = tmp_path / "big"
+    src.write_bytes(os.urandom(2 << 20))
+    dest = tmp_path / "out"
+    dest.mkdir()
+    task = asyncio.ensure_future(up.run_rsync(
+        ["rsync", "--partial", "--bwlimit=200", str(src), f"{dest}/"]))
+    await asyncio.sleep(1.5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    kept = dest / "big"
+    assert kept.exists() and 0 < kept.stat().st_size < src.stat().st_size

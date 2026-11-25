@@ -83,6 +83,7 @@ _SETTABLE = ("positionX", "positionY", "rotation", "scaleX", "scaleY", "alignmen
 
 class Holding(Feature):
     name = "holding"
+    restore_needs_obs = True
 
     def __init__(self, cfg: Config, *, obs: Any,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):

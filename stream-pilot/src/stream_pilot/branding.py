@@ -57,6 +57,7 @@ def live_title(template: str, group_name: str, now: datetime) -> str | None:
 
 class Branding(Feature):
     name = "branding"
+    restore_needs_obs = True
 
     def __init__(
         self,

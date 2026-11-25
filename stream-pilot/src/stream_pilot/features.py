@@ -3,8 +3,8 @@
 A feature is an object the controller calls at fixed points of the stream's
 life. Switches are read once, at startup (from the loaded config). The
 controller only calls the hooks of features that are on, except
-:meth:`Feature.restore`, which it calls for features that are off, at boot and
-on every OBS connect, so a feature that was on earlier undoes what it changed
+:meth:`Feature.restore`, which it calls for features that are off, at boot
+(unless ``restore_needs_obs``) and on every OBS connect, so a feature that was on earlier undoes what it changed
 (camera controls back to auto, its OBS items disabled or hidden).
 
 Every hook is awaited with a timeout and its exceptions are logged, never
@@ -26,6 +26,8 @@ HOOK_TIMEOUT_S = 10.0
 
 class Feature:
     name: str = ""
+    # restore() only talks to OBS: it runs on OBS connects, not at boot (OBS may not be up yet).
+    restore_needs_obs: bool = False
 
     def __init__(self, enabled: bool):
         self.enabled = enabled

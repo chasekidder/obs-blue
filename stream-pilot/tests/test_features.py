@@ -179,3 +179,17 @@ async def test_no_features_means_no_obs_requests(tmp_path, monkeypatch):
     await asyncio.wait_for(c.wait_idle(), 2)
     assert c.obs.requests == []
     await c.aclose()
+
+
+async def test_boot_skips_restores_that_need_obs(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    obs_only, local = Probe(False), Probe(False)
+    obs_only.restore_needs_obs = True
+    c, _ = make(tmp_path, [obs_only, local])
+    await c.boot()
+    await asyncio.wait_for(c.wait_idle(), 2)
+    assert obs_only.calls == [] and local.calls == ["restore"]
+    await c.handle(ObsConnected())
+    await asyncio.wait_for(c.wait_idle(), 2)
+    assert obs_only.calls == ["restore"]
+    await c.aclose()
