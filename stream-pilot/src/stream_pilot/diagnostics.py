@@ -696,7 +696,7 @@ def summarize(stream_dir: Path) -> str:
     if retr and sent:
         out.append(f"RTMP retransmits: {max(retr) - min(retr)} segment(s); sent {(max(sent) - min(sent)) / 1e6:.0f} MB")
     out.append(_stats_line("RTMP unsent bytes", [x.get("notsent") for x in rt], "", 0))
-    out.append(_stats_line("RTMP delivery rate", [(x.get("delivery_bps") or 0) / 1000 or None for x in rt], " kbps", 0))
+    out.append(_stats_line("RTMP delivery rate (kernel's last sample)", [(x.get("delivery_bps") or 0) / 1000 or None for x in rt], " kbps", 0))
     out.append(_stats_line("uplink", [r.get("tx_kbps") for r in net], " kbps", 0))
     pings = [r.get("gw_ping_ms") for r in net if "gw_ping_ms" in r]
     lost = sum(1 for p in pings if p is None)
@@ -766,8 +766,8 @@ def summarize(stream_dir: Path) -> str:
         ("capture re-attaches", r"re-attaching to live"),
         ("deck warnings", r"deck warning: (?!none)"),
         ("display mirror log lines", r"stream_pilot\.display"),
-        ("warnings", r"\bWARNING\b"),
-        ("errors", r"\bERROR\b|Traceback"),
+        ("stream-pilot warnings", r"stream-pilot[\w-]*\[\d+\]: WARNING\b"),
+        ("stream-pilot errors", r"stream-pilot[\w-]*\[\d+\]: (?:ERROR|CRITICAL)\b|Traceback"),
     ):
         out.append(f"{label}: {len(re.findall(rx, journal))}")
     errors = _jsonl(d / "events.jsonl")

@@ -113,6 +113,17 @@ def test_sample_processes_fake_tree(tmp_path):
     assert by_pid[200].client_id is None
 
 
+def test_chromium_label_of_a_rewritten_command_line():
+    # Chromium's children rewrite their argv into one space-separated string
+    # (seen on the stream PC): /proc/<pid>/cmdline has no NUL between the switches.
+    from stream_pilot.memory import _chromium_label
+
+    one = ["/usr/lib64/chromium-browser/chromium-browser --type=renderer --renderer-client-id=9 --lang=en", ""]
+    assert _chromium_label(one) == ("chromium-renderer", "9")
+    assert _chromium_label(["/usr/lib64/chromium-browser/chromium-browser --type=gpu-process", ""]) == (
+        "chromium-gpu-process", None)
+
+
 def test_sample_processes_chrome_comm_and_other_types(tmp_path):
     root = tmp_path / "proc"
     root.mkdir()

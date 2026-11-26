@@ -99,7 +99,9 @@ def parse_psi(text: str) -> dict[str, float]:
 def _chromium_label(argv: list[str]) -> tuple[str, str | None]:
     kind = None
     client_id = None
-    for arg in argv:
+    # Chromium's child processes rewrite their command line into one string.
+    args = [a for part in argv for a in part.split(" ")]
+    for arg in args:
         if arg.startswith("--type="):
             kind = arg[len("--type="):]
         elif arg.startswith("--renderer-client-id="):

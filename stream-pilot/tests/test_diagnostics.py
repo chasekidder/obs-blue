@@ -89,6 +89,7 @@ def test_small_parsers():
     ("obs", [], "obs"),
     ("chromium-browse", ["/usr/lib64/chromium-browser/chromium-browser", "--type=renderer"], "chromium-renderer"),
     ("chromium-browse", ["/usr/lib64/chromium-browser/chromium-browser", "--type=gpu-process"], "chromium-other"),
+    ("chromium-browse", ["/usr/lib64/chromium-browser/chromium-browser --type=renderer --lang=en", ""], "chromium-renderer"),
     ("kwin_wayland", [], "kwin_wayland"),
     ("pipewire-pulse", [], "pipewire"),
     ("stream-pilot", ["/usr/lib/stream-pilot/venv/bin/python3", "/usr/bin/stream-pilot", "run"], "stream-pilot-run"),
@@ -227,7 +228,11 @@ async def test_run_until_stopped_then_exports_and_summarizes(tmp_path, monkeypat
     logs = tmp_path / "home/.config/obs-studio/logs"
     logs.mkdir(parents=True)
     (logs / "2026-11-25 18-06-11.txt").write_text("rtmp key FB-1234567890123456-0-Secret\n")
-    run = FakeRun(journal="INFO stream_pilot.controller: state -> LIVE\nkey=FB-1234567890123456-0-Secret\n")
+    run = FakeRun(journal=(
+        "1.0 stream-pc stream-pilot[12]: INFO stream_pilot.controller: state -> LIVE\n"
+        "2.0 stream-pc chromium-launch[3]: [1:2:3:ERROR:dcsctp_transport.cc:560] OnAborted\n"
+        "3.0 stream-pc stream-pilot[12]: ERROR stream_pilot.x: boom\n"
+        "key=FB-1234567890123456-0-Secret\n"))
     stream = tmp_path / "s"
     stream.mkdir()
     (stream / "comments.jsonl").write_text(
@@ -247,6 +252,7 @@ async def test_run_until_stopped_then_exports_and_summarizes(tmp_path, monkeypat
     summary = (d / "summary.txt").read_text()
     assert "dropped (network): " in summary and "frames in" in summary
     assert "state changes: 1" in summary
+    assert "stream-pilot errors: 1" in summary
     assert "lines by source: fb_dom 1" in summary
     events = [json.loads(x) for x in (d / "events.jsonl").read_text().splitlines()]
     assert [e["event"] for e in events] == ["collector_started", "collector_stopped"]
