@@ -112,7 +112,7 @@ The power guard powers off 15 s after a press unless `status.json` says ENDING, 
 | Facebook logged out | LOGIN waits | at the next setup | no effect until the end | — |
 | Facebook preview lost | — | setup again | — | — |
 | Comments column stops getting live updates | — | — | fresh check every 90 s when quiet, reload if it missed comments | — |
-| The live is ended on Facebook (phone, Facebook itself) | — | — | **G-12** today OBS keeps sending (or retries forever, `RECONNECTING`) → detected in the comments page (the live's "ended" state) → end flow without outro, back to setup | — |
+| The live is ended on Facebook (phone, Facebook itself) | — | — | **G-12** today OBS is disconnected and retries forever (`RECONNECTING`; seen on the PC) → after 20 s of RECONNECTING, every 30 s: the column, else a fresh copy of the dashboard in a background tab (the column can be stale: it still offered "End live video" minutes after the end) is checked for "Your live video has ended" / "Live video ended" → end flow without outro, back to setup | — |
 
 ### System
 
@@ -120,7 +120,7 @@ The power guard powers off 15 s after a press unless `status.json` says ENDING, 
 |---|---|
 | Internet down | pre-live: NO_NET until it is back; READY: preview lost → setup → NO_NET; LIVE: OBS reconnects (`RECONNECTING`, `NET`) |
 | KVM display drops / returns, Dell monitor only | display mirror keeps the KVM as the source; the layout script fits OBS and the column to whatever screen is active |
-| On-screen keyboard | **G-13** plasma-keyboard 6.8.3 can lay itself out for a stale screen size (upstream fix plasma-keyboard!192) → re-checked on the PC; mitigation below |
+| On-screen keyboard | **G-13** when the KVM drops, the mirrored desktop briefly has no screen (plasma-keyboard logs "There are no outputs - creating placeholder screen", seen during the 2026-11-26 lives) and plasma-keyboard 6.8.3 keeps that stale size (upstream fix plasma-keyboard!192) → the display-mirror service restarts the keyboard after every screen change, once it is closed (KWin restarts the input method when `[Wayland] InputMethod` is cleared and set again; killing it is not restarted) |
 | Camera unplugged | `CAM?` within 10 s; the scene shows nothing until it is back |
 | Microphone unplugged | `MIC?` after 30 s of silence; the recorder starts a new session when it is back |
 | stream-pilot crash / restart | systemd restarts it in 2 s; a saved live resumes (`RECONNECTING` → `LIVE`), otherwise setup starts over |
