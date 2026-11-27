@@ -161,7 +161,7 @@ if grep -qE "^(position|size)rule=" /etc/xdg/kwinrulesrc; then
   exit 1
 fi
 if grep -qx "wmclass=chromium-browser" /etc/xdg/kwinrulesrc || grep -qx "above=true" /etc/xdg/kwinrulesrc; then
-  echo "kwinrulesrc must leave the host's Chromium windows alone (no rule, nothing always on top)" >&2
+  echo "kwinrulesrc must leave the host Chromium windows alone: no rule for them, nothing always on top" >&2
   exit 1
 fi
 grep -qx "Restart=always" /usr/lib/systemd/user/obs.service
