@@ -2543,44 +2543,65 @@ class EndedCapture(FakeCapture):
         return self.ended
 
 
-async def test_g12_live_ended_on_facebook_is_ended_here_after_two_checks(make):
+async def _reconnecting(make):
     cap = EndedCapture()
     rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
     await rig.to_live()
     await rig.c.handle(ObsStreamState(active=True, reconnecting=True))  # OBS lost Facebook
+    assert rig.c.state == State.RECONNECTING
+
+    async def tick(advance=0.0):
+        clock.t += advance
+        await rig.c.handle(Tick())
+        await rig.settle()
+
+    return rig, cap, tick
+
+
+def _asked(cap):
+    return [c for c in cap.calls if c[0] == "capture.live_ended"]
+
+
+async def test_g12_facebook_is_asked_only_after_20_s_of_reconnecting(make):
+    rig, cap, tick = await _reconnecting(make)
+    await tick(controller_mod.ENDED_AFTER_S - 1)
+    assert _asked(cap) == []
+    await tick(1)
+    assert len(_asked(cap)) == 1
+    await tick(controller_mod.ENDED_EVERY_S - 1)
+    assert len(_asked(cap)) == 1
+    await tick(1)
+    assert len(_asked(cap)) == 2
+    assert rig.c.state == State.RECONNECTING
+
+
+async def test_g12_live_ended_on_facebook_is_ended_here(make):
+    rig, cap, tick = await _reconnecting(make)
     cap.ended = True
-    await rig.c.handle(Tick())
-    await rig.settle()
-    assert rig.c.state == State.RECONNECTING  # one sighting is not enough
-    await rig.c.handle(Tick())
-    await rig.settle()
+    await tick(controller_mod.ENDED_AFTER_S)
     assert ("obs.stop_stream",) in rig.obs.calls
     assert rig.c.state == State.READY
 
 
-async def test_g12_a_single_sighting_resets(make):
+async def test_g12_never_asked_while_live_and_streaming(make):
     cap = EndedCapture()
     rig = make(capture=cap)
+    clock = FakeClock()
+    rig.c.clock = clock
     await rig.to_live()
     cap.ended = True
-    await rig.c.handle(Tick())
-    await rig.settle()
-    cap.ended = False
-    await rig.c.handle(Tick())
-    await rig.settle()
-    cap.ended = True
-    await rig.c.handle(Tick())
-    await rig.settle()
-    assert rig.c.state == State.LIVE
+    for _ in range(3):
+        clock.t += 60
+        await rig.c.handle(Tick())
+        await rig.settle()
+    assert _asked(cap) == [] and rig.c.state == State.LIVE
 
 
 async def test_g12_not_while_paused(make):
-    cap = EndedCapture()
-    rig = make(capture=cap)
-    await rig.to_live()
+    rig, cap, tick = await _reconnecting(make)
     await rig.c.handle(PauseRequested())
     cap.ended = True
-    for _ in range(3):
-        await rig.c.handle(Tick())
-        await rig.settle()
-    assert rig.c.state == State.LIVE
+    await tick(controller_mod.ENDED_AFTER_S * 3)
+    assert rig.c.state == State.RECONNECTING

@@ -98,9 +98,12 @@ REATTACH_BACKOFF_MAX_S = 300.0
 # it with Facebook this often (capture.check_fresh), bounded by the timeout.
 FRESH_CHECK_S = 90.0
 FRESH_CHECK_TIMEOUT_S = 60.0
-# A live ended on Facebook (e.g. from the host's phone) leaves OBS reconnecting forever;
-# the column showing "Live video ended" on this many Ticks in a row ends it here too.
-ENDED_CHECKS = 2
+# A live ended on Facebook (e.g. from the host's phone) drops OBS's connection and
+# leaves it reconnecting forever. After this long in RECONNECTING, Facebook is asked
+# (capture.live_ended: the column, else a fresh copy of the dashboard) at most every
+# ENDED_EVERY_S; if it says the live ended, it is ended here too.
+ENDED_AFTER_S = 20.0
+ENDED_EVERY_S = 30.0
 # Bound for open_comments / capture.start in the go-live and resume paths.
 CAPTURE_STEP_TIMEOUT_S = 90.0
 # Bound for having SSN reopen its background tab (runs in its own task when self-healing).
@@ -204,7 +207,8 @@ class Controller:
         self._reattach_next_try = 0.0
         self._fresh: asyncio.Task | None = None
         self._ended: asyncio.Task | None = None
-        self._ended_hits = 0
+        self._recon_at: float | None = None  # clock() when RECONNECTING was entered
+        self._ended_checked_at: float | None = None
         self._fresh_next: float | None = None  # clock() of the next check; None: not scheduled
         self._ssn_heal: asyncio.Task | None = None
         self._ssn_healed_at: float | None = None
@@ -632,7 +636,6 @@ class Controller:
         await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
         if self._ended is not asyncio.current_task():
             await self._cancel_bounded(self._ended, REATTACH_CANCEL_WAIT_S)
-        self._ended_hits = 0
         self._fresh_next = None
         self._end_armed_at = None
         self._end_after_live = None
@@ -774,22 +777,31 @@ class Controller:
         live_id = self.live_id
         if check is None or live_id is None or not self._flow_idle():
             return
+        if self.state != State.RECONNECTING or self._recon_at is None:
+            return
         if self._ended is not None and not self._ended.done():
             return
+        now = self.clock()
+        if now - self._recon_at < ENDED_AFTER_S:
+            return
+        if self._ended_checked_at is not None and now - self._ended_checked_at < ENDED_EVERY_S:
+            return
+        self._ended_checked_at = now
         self._ended = asyncio.get_running_loop().create_task(self._check_ended(check, live_id))
 
     async def _check_ended(self, check: Callable[[str], Awaitable[bool]], live_id: str) -> None:
         try:
-            ended = await asyncio.wait_for(check(live_id), INLINE_TIMEOUT_S)
+            ended = await asyncio.wait_for(check(live_id), FRESH_CHECK_TIMEOUT_S)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.debug("capture.live_ended failed: %r", exc)
+            log.warning("capture.live_ended failed: %r", exc)
             return
-        self._ended_hits = self._ended_hits + 1 if ended else 0
-        if (self._ended_hits >= ENDED_CHECKS and self.state in LIVE_STATES
-                and self.live_id == live_id and not self._paused and self._flow_idle()):
-            self._ended_hits = 0
+        if not ended:
+            log.info("still reconnecting; Facebook has not ended live %s", live_id)
+            return
+        if (self.state in LIVE_STATES and self.live_id == live_id and not self._paused
+                and self._flow_idle()):
             log.warning("live %s was ended on Facebook; ending it here", live_id)
             await self._begin_end(power_off=False, outro=False)
 
@@ -875,6 +887,8 @@ class Controller:
 
     def _transition(self, state: State) -> None:
         """Enter ``state``: persist, write status, update key 0. Never awaits."""
+        if state == State.RECONNECTING and self.state != State.RECONNECTING:
+            self._recon_at, self._ended_checked_at = self.clock(), None
         self.state = state
         self._since = time.time()
         log.info("state -> %s", state.value)

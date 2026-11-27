@@ -41,6 +41,12 @@ _CLOSE_POPOUT_S = 3.0  # bound for closing one popout page in stop()
 FRESH_QUIET_S = 90.0
 FRESH_LOAD_S = 25.0
 FRESH_SETTLE_S = 5.0
+# Whether any element's own text is Facebook's "live ended" notice.
+_ENDED_JS = """(([re]) => {
+  const rx = eval(re);
+  return Array.from(document.querySelectorAll('body *')).some(
+    (el) => el.childElementCount === 0 && rx.test((el.textContent || '').trim()));
+})(%s)"""
 # Every comment article's own permalink href (null if it has none), as in watcher.js.
 _PERMALINKS_JS = """(([articleSel, linkSel]) => {
   return Array.from(document.querySelectorAll(articleSel)).map((article) => {
@@ -219,12 +225,26 @@ class CaptureAdapter:
         return True
 
     async def live_ended(self, live_id: str) -> bool:
-        """True if the comments column (the live's dashboard) says the live has ended."""
+        """True if Facebook says the live has ended.
+
+        The comments column is the live's dashboard, but it can stop getting
+        Facebook's updates (2026-11-26: it still offered "End live video" minutes
+        after the live was ended from another device), so a fresh copy of the
+        dashboard is read in a background tab when the column does not say so.
+        """
+        if self._log is None or self._log.live_id != live_id:
+            return False
         dom = self._dom
         page = dom.attached_page if dom is not None else None
-        if self._log is None or self._log.live_id != live_id or page is None or page.is_closed():
-            return False
-        return await page.get_by_text(S.LIVE_ENDED_TEXT).count() > 0
+        if page is not None and not page.is_closed():
+            if await page.get_by_text(S.LIVE_ENDED_TEXT).count() > 0:
+                return True
+        url = self._cfg.facebook.comments_url_template.format(live_id=live_id)
+        script = _ENDED_JS % json.dumps([S.js_regex_source(S.LIVE_ENDED_TEXT)])
+        return bool(await self._browser.read_in_background(
+            url, script, ready_selector=S.COMMENT_ARTICLE_SELECTOR + ", [role=button]",
+            timeout_s=FRESH_LOAD_S,
+        ))
 
     def _check_gen(self, gen: int) -> None:
         if gen != self._gen:
