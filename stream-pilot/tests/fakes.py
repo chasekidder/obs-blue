@@ -525,6 +525,9 @@ class FakeSystem(Gated):
         else:
             self.active_units.discard(unit)
 
+    async def set_window_layout(self, enabled: bool) -> None:
+        self.calls.append(("system.set_window_layout", enabled))
+
     async def stop_user_unit_no_block(self, unit: str) -> None:
         self.calls.append(("system.stop_user_unit_no_block", unit))
         self.active_units.discard(unit)

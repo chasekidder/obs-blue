@@ -92,7 +92,8 @@ Extra features each have their own section in `~/.config/stream-pilot/site.toml`
 Useful afterwards:
 
 - `stream-pilot status` shows the current state and which optional features are on.
-- `stream-pilot press` presses the status key over SSH (goes live when it shows `GO LIVE`); `stream-pilot press --long` ends a live without powering off.
+- `stream-pilot press` presses the status key over SSH (goes live when it shows `GO LIVE`; twice within 5 s ends a live); `stream-pilot press --long` ends a live at once without powering off.
+- `stream-pilot pause` (or holding `RETRY` 3 s, or the "Pause / resume stream-pilot" launcher entry) pauses stream-pilot: it keeps its state but changes nothing by itself (no setup, restarts, column reloads or window moves) until resumed the same way or with a short `RETRY` press. Use it to work on OBS, Chromium or the PC by hand. A reboot always comes back unpaused.
 - `journalctl --user -u stream-pilot -f` follows the live log.
 - If an update misbehaves and greenboot did not catch it, roll back over SSH with `sudo bootc rollback && sudo systemctl reboot` (as an admin user or root).
 

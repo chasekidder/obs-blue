@@ -14,6 +14,7 @@ restarts the controller (which resumes a persisted live).
 from __future__ import annotations
 
 import asyncio
+import os
 import inspect
 import logging
 import signal
@@ -30,7 +31,9 @@ from .controller import Controller
 from .deck import StreamDeckAdapter
 from .deck_warnings import DeckWarnings
 from .diagnostics import Diagnostics
-from .events import DeckPress, ObsConnected, RetryRequested, Tick
+from .events import (
+    DeckPress, EndRequested, ObsConnected, PauseRequested, ProgramSceneChanged, RetryRequested, Tick,
+)
 from .fb.adapter import CaptureAdapter, FacebookAdapter
 from .features import Feature, describe
 from .holding import Holding
@@ -158,6 +161,12 @@ async def _supervised(
         backoff = min(backoff * 2, BACKOFF_MAX_S)
 
 
+def pause_flag_path() -> Path:
+    """The pause marker: in the runtime dir, so a reboot always comes back unpaused."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return Path(runtime) / "stream-pilot" / "paused"
+
+
 def build_features(
     cfg: Config, *, obs: SimpleObsClient, deck, camera, system: SystemCtl, fb: FacebookPort
 ) -> list[Feature]:
@@ -227,10 +236,18 @@ def build_app(
         status=StatusWriter(state_dir / "status.json"),
         dry_run=dry_run,
         features=features,
+        pause_flag=pause_flag_path(),
     )
     for source in (obs, deck, power, ssn_watch):
         source.set_event_sink(controller.sink)
     obs.add_connect_listener(lambda: controller.sink(ObsConnected()))
+
+    def program_scene(data: dict | None) -> None:
+        name = (data or {}).get("sceneName")
+        if isinstance(name, str):
+            controller.sink(ProgramSceneChanged(name))
+
+    obs.on_event("CurrentProgramSceneChanged", program_scene)
     log.info("features: %s", describe(cfg.features()))
     warnings = next(f for f in features if isinstance(f, DeckWarnings))
     # With deck warnings on, the memory guard's MEM goes through them (lowest priority).
@@ -290,8 +307,11 @@ async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) ->
         installed.append(signal.SIGUSR1)
         loop.add_signal_handler(signal.SIGUSR2, lambda: controller.sink(DeckPress(0)))
         installed.append(signal.SIGUSR2)
-        loop.add_signal_handler(signal.SIGRTMIN, lambda: controller.sink(DeckPress(0, long=True)))
+        loop.add_signal_handler(signal.SIGRTMIN, lambda: controller.sink(EndRequested()))
         installed.append(signal.SIGRTMIN)
+        pause_sig = signal.SIGRTMIN + 1
+        loop.add_signal_handler(pause_sig, lambda: controller.sink(PauseRequested()))
+        installed.append(pause_sig)
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, on_stop_signal, sig.name)
             installed.append(sig)

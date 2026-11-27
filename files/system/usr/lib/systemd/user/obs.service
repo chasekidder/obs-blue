@@ -6,7 +6,9 @@ After=graphical-session.target xdg-desktop-portal.service
 [Service]
 ExecStartPre=/usr/bin/stream-pilot seed-obs
 ExecStart=/usr/bin/obs --disable-shutdown-check --profile "FB Live" --collection "Untitled"
-Restart=on-failure
+# Always: the host closing OBS's window (a clean exit) must not leave the PC without it,
+# least of all while live. stream-pilot's power-off stops the unit itself.
+Restart=always
 RestartSec=3
 MemoryLow=1G
 

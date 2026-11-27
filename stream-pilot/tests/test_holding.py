@@ -3,7 +3,7 @@
 import asyncio
 import dataclasses
 
-from stream_pilot.events import DeckPress, ObsConnected
+from stream_pilot.events import DeckPress, EndRequested, ObsConnected
 from stream_pilot.holding import BANNER_SCENE, STUDIO_SCENE, Holding
 from stream_pilot.persist import Saved
 from stream_pilot.states import State
@@ -117,7 +117,7 @@ async def test_studio_camera_keys_while_live_switch_the_air_and_never_hold(make)
 async def test_after_a_long_press_end_the_next_pre_roll_holds_again(make):
     rig = make(features=holding, site_extra=on())
     await rig.to_live()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c.state == State.READY
     assert rig.obs.model.program == STUDIO_SCENE and rig.obs.model.studio_mode

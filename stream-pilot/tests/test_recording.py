@@ -8,7 +8,7 @@ import pytest
 
 from stream_pilot import controller as controller_mod
 from stream_pilot import stream_meta
-from stream_pilot.events import DeckPress, PowerPress
+from stream_pilot.events import DeckPress, EndRequested, PowerPress
 from stream_pilot.persist import Saved
 from stream_pilot.recording import RECORDER_UNITS, Recording, recorder_unit
 from stream_pilot.states import State
@@ -135,7 +135,7 @@ async def test_long_press_end_also_finishes_the_folder(make):
     rig = make(features=recording, site_extra=ON)
     await rig.to_live()
     sd = stream_dir(rig)
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert (sd / "DONE").exists()
     assert rig.c.state == State.READY

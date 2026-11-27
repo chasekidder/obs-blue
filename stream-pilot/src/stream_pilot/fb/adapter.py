@@ -18,8 +18,9 @@ import json
 import logging
 import time
 from pathlib import Path
+from urllib.parse import quote
 
-from stream_pilot.browser import CdpBrowser
+from stream_pilot.browser import PARK_HTML, PARK_URL, CdpBrowser
 from stream_pilot.comment_log import CommentLog
 from stream_pilot.config import Config
 from stream_pilot.fb import selectors as S
@@ -68,6 +69,8 @@ class FacebookAdapter:
         self._producer: Producer | None = None
         self._producer_page = None
         self._comments_page = None
+        # A tab already on the producer is stream-pilot's (it restarted while Chromium ran).
+        self._adopt = (cfg.facebook.producer_url_template.split("?", 1)[0],)
 
     async def _ensure_connected(self) -> None:
         """Reconnect after Chromium restarted (``connect`` is idempotent and serialized)."""
@@ -79,7 +82,7 @@ class FacebookAdapter:
     async def _producer_for_dashboard(self) -> Producer:
         """One Producer per dashboard page (a new page, e.g. after a restart, gets a new one)."""
         await self._ensure_connected()
-        page = await self._browser.dashboard_page()
+        page = await self._browser.dashboard_page(adopt=self._adopt)
         if self._producer is None or self._producer_page is not page:
             self._producer = Producer(
                 page,
@@ -136,9 +139,9 @@ class FacebookAdapter:
 
     async def park_dashboard(self) -> None:
         await self._ensure_connected()
-        page = await self._browser.dashboard_page()
+        page = await self._browser.dashboard_page(adopt=self._adopt)
         timeout_ms = max(_GOTO_BLANK_MIN_S, self._cfg.timeouts.step_s) * 1000
-        await page.goto("about:blank", timeout=timeout_ms)
+        await page.goto(PARK_URL + quote(PARK_HTML), timeout=timeout_ms)
 
     async def save_failure(self, step: str, directory: Path) -> None:
         await (await self._producer_for_dashboard()).save_failure(step, directory)
@@ -214,6 +217,14 @@ class CaptureAdapter:
         )
         await page.reload()
         return True
+
+    async def live_ended(self, live_id: str) -> bool:
+        """True if the comments column (the live's dashboard) says the live has ended."""
+        dom = self._dom
+        page = dom.attached_page if dom is not None else None
+        if self._log is None or self._log.live_id != live_id or page is None or page.is_closed():
+            return False
+        return await page.get_by_text(S.LIVE_ENDED_TEXT).count() > 0
 
     def _check_gen(self, gen: int) -> None:
         if gen != self._gen:

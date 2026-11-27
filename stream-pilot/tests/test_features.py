@@ -177,7 +177,8 @@ async def test_no_features_means_no_obs_requests(tmp_path, monkeypatch):
     await c.boot()
     await c.handle(ObsConnected())
     await asyncio.wait_for(c.wait_idle(), 2)
-    assert c.obs.requests == []
+    # only the read-only scene list (camera keys match their scenes to OBS's names)
+    assert [r for r, _ in c.obs.requests] == ["GetSceneList"]
     await c.aclose()
 
 

@@ -288,6 +288,14 @@ def test_press_long_cli_sends_sigrtmin(home, monkeypatch):
                       "stream-pilot.service"]]
 
 
+def test_pause_cli_sends_sigrtmin_plus_one(home, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_run_command", lambda argv: calls.append(argv) or 0)
+    assert main(["pause"]) == 0
+    assert calls == [["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGRTMIN+1",
+                      "stream-pilot.service"]]
+
+
 def test_press_cli_missing_systemctl_exits_1(home, monkeypatch, capsys):
     def boom(argv):
         raise FileNotFoundError("systemctl")

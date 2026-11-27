@@ -16,7 +16,7 @@ from stream_pilot import app
 from stream_pilot.browser import CdpBrowser
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
-from stream_pilot.events import DeckPress, RetryRequested, Tick
+from stream_pilot.events import EndRequested, DeckPress, RetryRequested, Tick
 from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
 from stream_pilot.persist import StateStore, StatusWriter
 from stream_pilot.ports import StepFailed
@@ -601,7 +601,7 @@ async def test_run_app_sigrtmin_enqueues_a_status_key_long_press(cfg, monkeypatc
             if controller.events:
                 break
             await asyncio.sleep(0.01)
-        assert controller.events == [DeckPress(0, long=True)]
+        assert controller.events == [EndRequested()]
 
 
 async def test_run_app_passes_record_dir_to_build_app(cfg, monkeypatch, restore_signals, tmp_path):

@@ -373,3 +373,12 @@ def test_is_login_flow_url(url, expected):
 
     assert is_login_flow_url(url) is expected
 
+
+
+def test_live_ended_text_matches_what_facebook_shows():
+    from stream_pilot.fb.selectors import LIVE_ENDED_TEXT
+
+    for seen in ("Live video ended", "Your live video has ended", "Your live video has ended."):
+        assert LIVE_ENDED_TEXT.match(seen)
+    for other in ("End live video", "End live video?", "Live video", "Your live video will end soon"):
+        assert not LIVE_ENDED_TEXT.match(other)

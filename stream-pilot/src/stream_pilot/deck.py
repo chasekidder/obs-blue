@@ -27,7 +27,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import DeckCfg
-from .events import DeckPress, Event
+from .events import DeckDown, DeckPress, Event
 from .ports import EventSink
 from .states import KeyFace
 
@@ -279,11 +279,14 @@ class StreamDeckAdapter:
             if deck is not self._deck:
                 return  # stale callback from a dropped/replaced deck
             now = time.monotonic()
+            loop = self._loop
             if pressed:
                 self._down[key] = now
+                if loop is not None:
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(self._deliver, DeckDown(key))
                 return
             down_at = self._down.pop(key, None)
-            loop = self._loop
             if down_at is None or loop is None:
                 return
             event = press_event(key, down_at, now, self._cfg.long_press_s)

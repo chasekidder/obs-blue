@@ -121,6 +121,8 @@ grep -qx "CPUSchedulingPolicy=idle" "$diag"
 grep -qx "IOSchedulingClass=idle" "$diag"
 grep -qx "MemoryMax=256M" "$diag"
 stream-pilot diag --help > /dev/null
+stream-pilot pause --help > /dev/null
+grep -qx "Exec=/usr/bin/stream-pilot pause" /usr/share/applications/stream-pilot-pause.desktop
 test -f "$units/stream-pilot-upload.timer"
 grep -qx "ExecStart=/usr/bin/stream-pilot upload" "$units/stream-pilot-upload.service"
 grep -qx "IOSchedulingClass=idle" "$units/stream-pilot-upload.service"
@@ -158,6 +160,12 @@ if grep -qE "^(position|size)rule=" /etc/xdg/kwinrulesrc; then
   echo "kwinrulesrc must not force geometry (the streampilotlayout script sizes from the screen)" >&2
   exit 1
 fi
+if grep -qx "wmclass=chromium-browser" /etc/xdg/kwinrulesrc || grep -qx "above=true" /etc/xdg/kwinrulesrc; then
+  echo "kwinrulesrc must leave the host's Chromium windows alone (no rule, nothing always on top)" >&2
+  exit 1
+fi
+grep -qx "Restart=always" /usr/lib/systemd/user/obs.service
+grep -qx "Restart=always" /usr/lib/systemd/user/chromium.service
 grep -q "kde-authorized remote-desktop com.rustdesk.RustDesk yes" /etc/xdg/autostart/com.rustdesk.RustDesk.desktop
 grep -qx "Enabled=false" /etc/xdg/kwalletrc
 grep -q -- "--password-store=basic" /usr/libexec/stream-pilot/chromium-launch

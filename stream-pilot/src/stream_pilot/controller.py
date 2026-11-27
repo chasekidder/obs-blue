@@ -34,10 +34,14 @@ from .comment_log import build_report
 from .config import Config
 from .events import (
     DeckPress,
+    DeckDown,
+    EndRequested,
     Event,
     ObsConnected,
     ObsStreamState,
+    PauseRequested,
     PowerPress,
+    ProgramSceneChanged,
     RetryRequested,
     SsnStalled,
     Tick,
@@ -53,6 +57,8 @@ from .ports import (
     StepFailed,
     SystemPort,
 )
+from .obs import CODE_RESOURCE_NOT_FOUND, ObsRequestFailed
+from .scenes import obs_scene_names, resolve_scene
 from .states import LIVE_STATES, STATUS_FACES, KeyFace, State
 
 log = logging.getLogger(__name__)
@@ -92,6 +98,9 @@ REATTACH_BACKOFF_MAX_S = 300.0
 # it with Facebook this often (capture.check_fresh), bounded by the timeout.
 FRESH_CHECK_S = 90.0
 FRESH_CHECK_TIMEOUT_S = 60.0
+# A live ended on Facebook (e.g. from the host's phone) leaves OBS reconnecting forever;
+# the column showing "Live video ended" on this many Ticks in a row ends it here too.
+ENDED_CHECKS = 2
 # Bound for open_comments / capture.start in the go-live and resume paths.
 CAPTURE_STEP_TIMEOUT_S = 90.0
 # Bound for having SSN reopen its background tab (runs in its own task when self-healing).
@@ -109,8 +118,29 @@ PREROLL_RECONNECT_WAIT_S = 65.0
 
 # States in which the retry key / go-live-key-as-retry must be ignored.
 _NO_RETRY = frozenset({State.GOING_LIVE, State.LIVE, State.RECONNECTING, State.ENDING})
+# A live ends on a second status-key press within this long of the first.
+END_CONFIRM_S = 5.0
+# ERROR is retried by itself this often (the key keeps showing the failed step).
+ERROR_RETRY_S = 120.0
+# How long a key shows that a press did nothing (BUSY, NO SCENE).
+FLASH_S = 2.0
+# Holding RETRY this long pauses (or resumes) stream-pilot; the key counts down from
+# PAUSE_COUNTDOWN_FROM_S into the hold, so a short press shows no countdown.
+PAUSE_HOLD_S = 3.0
+PAUSE_COUNTDOWN_FROM_S = 0.5
+_PAUSED_BG = "#8a6d00"
+_PAUSED_LABELS = {
+    State.STARTING: "BOOT", State.NO_NET: "NO NET", State.LOGIN: "LOG IN", State.SETUP: "SETUP",
+    State.READY: "READY", State.GOING_LIVE: "GOING", State.LIVE: "LIVE",
+    State.RECONNECTING: "RECON", State.ENDING: "ENDING", State.ERROR: "ERROR",
+}
+# Corrective work (setup) that pause stops; go-live and end flows are the host's own.
+_SETUP_STATES = frozenset({State.STARTING, State.NO_NET, State.LOGIN, State.SETUP})
 
 _FACE_RETRY = KeyFace("RETRY", "#333333")
+_FACE_PRESS_AGAIN = KeyFace("PRESS\nAGAIN", "#c0141c", blink=True)
+_FACE_BUSY = KeyFace("BUSY", "#555555")
+_FACE_NO_SCENE = KeyFace("NO\nSCENE", "#e67e00")
 _FACE_SPARE = KeyFace("", "#000000")
 _FACE_AF_ON = KeyFace("AF\nON", "#1e9e3e")
 _FACE_AF_OFF = KeyFace("AF\nOFF", "#555555")
@@ -138,6 +168,7 @@ class Controller:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         features: Sequence[Feature] = (),
+        pause_flag: Path | None = None,
     ):
         self.cfg = cfg
         self.features = list(features)
@@ -172,6 +203,8 @@ class Controller:
         self._reattach_failures = 0
         self._reattach_next_try = 0.0
         self._fresh: asyncio.Task | None = None
+        self._ended: asyncio.Task | None = None
+        self._ended_hits = 0
         self._fresh_next: float | None = None  # clock() of the next check; None: not scheduled
         self._ssn_heal: asyncio.Task | None = None
         self._ssn_healed_at: float | None = None
@@ -190,6 +223,20 @@ class Controller:
         self._go_live_pressed_at: float | None = None
         self._outro = False
         self._end_deadline: float | None = None  # clock() by which the end flow must be done
+        self._end_armed_at: float | None = None  # clock() of an unconfirmed end press
+        # An end asked for while GOING_LIVE ("end" or "power"): run once the live exists.
+        self._end_after_live: str | None = None
+        self._obs_retrying = False  # OBS reported RECONNECTING since the stream last started
+        self._error_at: float | None = None
+        self._flash_handles: dict[int, asyncio.TimerHandle] = {}
+        self._scene_alias: dict[str, str] = {}  # configured camera scene -> OBS's name
+        # Paused: stream-pilot changes nothing by itself (no setup, restarts, reloads,
+        # window moves) until resumed. Kept in a runtime file: a stream-pilot restart
+        # stays paused, a reboot does not.
+        self._pause_flag = pause_flag
+        self._paused = bool(pause_flag is not None and pause_flag.exists())
+        self._hold_handles: list[asyncio.TimerHandle] = []
+        self._hold_fired = False
 
     # ------------------------------------------------------------------ public
 
@@ -248,6 +295,11 @@ class Controller:
 
         self._spawn_feature_task(self._feature_hook("not_live"))
         self._transition(State.STARTING)
+        if self._paused:
+            log.warning("started paused: no setup until resumed (RETRY, or stream-pilot pause)")
+            self._spawn_feature_task(self._best_effort(
+                "window layout off", self.system.set_window_layout(False), INLINE_TIMEOUT_S))
+            return
         await self._start_flow(lambda: self._setup_flow("STARTING"))
 
     async def run(self) -> None:
@@ -263,6 +315,7 @@ class Controller:
         """Cancel background tasks (shutdown / test teardown)."""
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
         await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
+        await self._cancel_bounded(self._ended, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._ssn_heal)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
@@ -274,7 +327,8 @@ class Controller:
         while True:
             pending = {
                 t
-                for t in (self._flow, self._restart, self._reattach, self._fresh, self._ssn_heal,
+                for t in (self._flow, self._restart, self._reattach, self._fresh, self._ended,
+                          self._ssn_heal,
                           *self._feature_tasks)
                 if t is not None and not t.done()
             }
@@ -301,6 +355,14 @@ class Controller:
             await self._on_obs(event)
         elif isinstance(event, RetryRequested):
             await self._retry()
+        elif isinstance(event, EndRequested):
+            await self._end_requested()
+        elif isinstance(event, ProgramSceneChanged):
+            self._on_program_scene(event.name)
+        elif isinstance(event, DeckDown):
+            self._on_deck_down(event.key)
+        elif isinstance(event, PauseRequested):
+            await self._set_paused(not self._paused)
         elif isinstance(event, Tick):
             await self._on_tick()
         elif isinstance(event, SsnStalled):
@@ -324,6 +386,7 @@ class Controller:
 
     def _on_obs_connected(self) -> None:
         """Apply every feature's OBS items; one sync at a time, re-run if OBS reconnects meanwhile."""
+        self._spawn_feature_task(self._refresh_scene_alias())
         if self._obs_sync is not None and not self._obs_sync.done():
             self._obs_sync_again = True
             return
@@ -375,17 +438,27 @@ class Controller:
 
     async def _on_deck(self, ev: DeckPress) -> None:
         if ev.key == 0:
-            if ev.long:
-                if self.state in LIVE_STATES:
-                    await self._begin_end(power_off=False)
-                return
-            if self.state == State.READY:
+            if self.state == State.READY and not ev.long:
                 await self._go_live_pressed()
             elif self.state == State.ERROR:
                 await self._retry()
+            elif self.state in LIVE_STATES or self.state == State.GOING_LIVE:
+                await self._end_press()
         elif ev.key == 3:
-            await self._retry()
+            self._cancel_hold()
+            if self._hold_fired:
+                self._hold_fired = False  # the hold already paused / resumed
+                self._show(3, _FACE_RETRY)
+                return
+            self._show(3, _FACE_RETRY)
+            if self._paused:
+                await self._set_paused(False)
+            else:
+                await self._retry()
         elif ev.key in _CAMERA_KEYS:
+            if self.state == State.ENDING:
+                log.info("camera key ignored while ending (the outro is on air)")
+                return
             await self._camera_press(_CAMERA_KEYS[ev.key])
         elif ev.key == 1:
             await self._autofocus_press()
@@ -393,8 +466,136 @@ class Controller:
     async def _retry(self) -> None:
         if self.state in _NO_RETRY:
             log.info("retry ignored in %s", self.state)
+            self._flash(3, _FACE_BUSY, _FACE_RETRY)
             return
         await self._start_flow(lambda: self._setup_flow("LOGIN"), enter=State.STARTING)
+
+    # ------------------------------------------------------------- pause
+
+    def _on_deck_down(self, key: int) -> None:
+        if key != 3 or self._loop is None:
+            return
+        self._cancel_hold()
+        self._hold_fired = False
+        word = "RESUME" if self._paused else "PAUSE"
+        steps = [(min(PAUSE_COUNTDOWN_FROM_S, PAUSE_HOLD_S / 6), 3),
+                 (PAUSE_HOLD_S / 3, 2), (PAUSE_HOLD_S * 2 / 3, 1)]
+        for at, n in steps:
+            face = KeyFace(f"{word}\n{n}", _PAUSED_BG)
+            self._hold_handles.append(self._loop.call_later(at, self._show, 3, face))
+        self._hold_handles.append(self._loop.call_later(PAUSE_HOLD_S, self._hold_reached))
+
+    def _cancel_hold(self) -> None:
+        for h in self._hold_handles:
+            h.cancel()
+        self._hold_handles.clear()
+
+    def _hold_reached(self) -> None:
+        self._hold_handles.clear()
+        self._hold_fired = True
+        self.sink(PauseRequested())
+
+    async def _set_paused(self, on: bool) -> None:
+        if on == self._paused:
+            return
+        self._paused = on
+        if self._pause_flag is not None:
+            try:
+                if on:
+                    self._pause_flag.parent.mkdir(parents=True, exist_ok=True)
+                    self._pause_flag.touch()
+                else:
+                    self._pause_flag.unlink(missing_ok=True)
+            except OSError:
+                log.exception("cannot record the pause in %s", self._pause_flag)
+        self._show(3, _FACE_RETRY)
+        if on:
+            log.warning("paused: stream-pilot changes nothing by itself until resumed (state %s)",
+                        self.state)
+            if self.state in _SETUP_STATES:
+                await self._cancel(self._flow)
+            await self._cancel(self._restart)
+            await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
+            await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
+            await self._best_effort("window layout off", self.system.set_window_layout(False),
+                                    INLINE_TIMEOUT_S)
+        else:
+            log.warning("resumed: bringing %s back to a known state", self.state)
+            await self._best_effort("window layout on", self.system.set_window_layout(True),
+                                    INLINE_TIMEOUT_S)
+        self._show(0, self._face_for(self.state))
+        self._write_status()
+        if not on:
+            await self._reconcile()
+
+    async def _reconcile(self) -> None:
+        """After a pause: setup again where it was stopped, end a live whose stream is gone."""
+        if self.state in _SETUP_STATES or self.state == State.ERROR:
+            await self._retry()
+        elif self.state in LIVE_STATES and self._flow_idle():
+            try:
+                active = await self._bounded("stream_active", self.obs.stream_active())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("resume: stream_active failed: %r", exc)
+                return
+            if not active:
+                log.warning("resume: OBS is not streaming the live; ending it")
+                await self._begin_end(power_off=False, outro=False)
+        # READY and LIVE otherwise: the next Tick checks the pre-roll / the column.
+
+    # ------------------------------------------------------------- ending
+
+    async def _end_press(self) -> None:
+        """Status key while GOING_LIVE/LIVE/RECONNECTING: the first press arms, a second
+        one within END_CONFIRM_S ends the live (so a stray press never ends a sale)."""
+        now = self.clock()
+        armed = self._end_armed_at
+        if armed is None or now - armed > END_CONFIRM_S:
+            self._end_armed_at = now
+            log.info("status key pressed while %s: press again within %.0fs to end",
+                     self.state, END_CONFIRM_S)
+            self._show(0, _FACE_PRESS_AGAIN)
+            if self._loop is not None:
+                self._loop.call_later(END_CONFIRM_S + 0.05, self._disarm_end_if_expired)
+            return
+        self._end_armed_at = None
+        log.info("status key pressed again: ending the live")
+        await self._end_requested()
+
+    def _disarm_end_if_expired(self) -> None:
+        armed = self._end_armed_at
+        if armed is None or self.clock() - armed < END_CONFIRM_S:
+            return
+        self._end_armed_at = None
+        if self.state != State.ENDING and self._end_after_live is None:
+            self._show(0, self._face_for(self.state))
+
+    async def _end_requested(self) -> None:
+        """End the live without powering off (confirmed press, or ``press --long``)."""
+        if self.state in LIVE_STATES:
+            await self._begin_end(power_off=False)
+        elif self.state == State.GOING_LIVE:
+            if self._end_after_live is None:
+                self._end_after_live = "end"
+            log.info("the live will end as soon as Facebook confirms it")
+            self._show(0, STATUS_FACES[State.ENDING])
+
+    def _flash(self, key: int, face: KeyFace, back: KeyFace | Callable[[], KeyFace]) -> None:
+        """Show ``face`` on ``key`` for FLASH_S, then ``back`` (a face or a function giving one)."""
+        self._show(key, face)
+        if self._loop is None:
+            return
+        old = self._flash_handles.pop(key, None)
+        if old is not None:
+            old.cancel()
+
+        def restore() -> None:
+            self._flash_handles.pop(key, None)
+            self._show(key, back() if callable(back) else back)
+
+        self._flash_handles[key] = self._loop.call_later(FLASH_S, restore)
 
     async def _go_live_pressed(self) -> None:
         if self.dry_run:
@@ -417,26 +618,51 @@ class Controller:
             return
         if self.state in LIVE_STATES:
             await self._begin_end(power_off=True)
+        elif self.state == State.GOING_LIVE:
+            # Never cancel the go-live mid-click: a live that starts must be ended
+            # properly (outro, report), then the PC powers off.
+            self._end_after_live = "power"
+            log.info("power pressed while going live: ending the live once it exists, then powering off")
+            self._show(0, STATUS_FACES[State.ENDING])
         else:
             await self._start_flow(self._shutdown_flow, enter=State.ENDING)
 
-    async def _begin_end(self, *, power_off: bool) -> None:
+    async def _begin_end(self, *, power_off: bool, outro: bool | None = None) -> None:
         await self._cancel_bounded(self._reattach, REATTACH_CANCEL_WAIT_S)
         await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
+        if self._ended is not asyncio.current_task():
+            await self._cancel_bounded(self._ended, REATTACH_CANCEL_WAIT_S)
+        self._ended_hits = 0
         self._fresh_next = None
+        self._end_armed_at = None
+        self._end_after_live = None
         await self._cancel(self._restart)
         self._power_after_end = False
-        self._outro = self.state == State.LIVE  # not while RECONNECTING: nothing would air it
+        # Not while RECONNECTING (nothing would air it), nor when the stream already stopped.
+        self._outro = self.state == State.LIVE if outro is None else outro
         self._end_mode = "power" if power_off else "end"
         await self._start_flow(
             lambda: self._end_flow(power_off=power_off), enter=State.ENDING
         )
 
     async def _on_obs(self, ev: ObsStreamState) -> None:
+        retrying, self._obs_retrying = self._obs_retrying, ev.reconnecting
+        if self._paused:
+            # Only follow what OBS reports; nothing is restarted or ended (resume decides).
+            if self.state == State.LIVE and ev.active and ev.reconnecting:
+                self._transition(State.RECONNECTING)
+            elif self.state == State.RECONNECTING and ev.active and not ev.reconnecting:
+                self._transition(State.LIVE)
+            return
         if not ev.active:
             self._stream_stopped_at = self.clock()
             if self.state == State.READY:
                 await self._redo_setup("OBS's pre-roll stream stopped")
+                return
+            if self.state == State.GOING_LIVE:
+                log.warning("OBS's stream stopped while going live; ending the live once it exists")
+                if self._end_after_live is None:
+                    self._end_after_live = "obs"
                 return
         if self.state not in LIVE_STATES:
             return
@@ -447,11 +673,27 @@ class Controller:
             if self.state == State.RECONNECTING:
                 await self._cancel(self._restart)
                 self._transition(State.LIVE)
+        elif self.state == State.LIVE and not retrying and self._restart_idle():
+            # Stopped without OBS's own reconnect first: the host clicked Stop Streaming
+            # (a dropped connection makes OBS report RECONNECTING before it gives up).
+            log.warning("OBS's stream was stopped in OBS while live; ending the live")
+            await self._begin_end(power_off=False, outro=False)
         else:
             self._obs_gave_up()
 
+    def _restart_idle(self) -> bool:
+        return self._restart is None or self._restart.done()
+
     async def _on_tick(self) -> None:
         self._write_status()
+        if self._paused:
+            return  # paused: no checks that could change anything
+        if (self.state == State.ERROR and self._flow_idle() and self._error_at is not None
+                and self.clock() - self._error_at >= ERROR_RETRY_S):
+            log.info("retrying setup %.0fs after the error", self.clock() - self._error_at)
+            self._error_at = None
+            await self._retry()
+            return
         if self.state == State.READY and self._flow_idle():
             try:
                 streaming = await self._bounded("stream_active", self.obs.stream_active())
@@ -474,6 +716,7 @@ class Controller:
                 await self._redo_setup("facebook preview lost")
         elif self.state in LIVE_STATES:
             self._maybe_reattach_capture()
+            self._maybe_check_ended()
             if self.state == State.LIVE:
                 self._maybe_check_fresh()
                 await self._poll_obs_while_live()
@@ -481,7 +724,7 @@ class Controller:
     async def _redo_setup(self, why: str) -> None:
         """READY no longer holds (the key must not stay green): run setup again."""
         # Re-check: the world may have moved while we awaited.
-        if self.state == State.READY and self._flow_idle():
+        if self.state == State.READY and self._flow_idle() and not self._paused:
             log.warning("%s; re-running setup", why)
             await self._start_flow(lambda: self._setup_flow("SETUP"), enter=State.SETUP)
 
@@ -525,6 +768,30 @@ class Controller:
         self._reattach = asyncio.get_running_loop().create_task(
             self._reattach_capture(live_id, stream_dir)
         )
+
+    def _maybe_check_ended(self) -> None:
+        check = getattr(self.capture, "live_ended", None)
+        live_id = self.live_id
+        if check is None or live_id is None or not self._flow_idle():
+            return
+        if self._ended is not None and not self._ended.done():
+            return
+        self._ended = asyncio.get_running_loop().create_task(self._check_ended(check, live_id))
+
+    async def _check_ended(self, check: Callable[[str], Awaitable[bool]], live_id: str) -> None:
+        try:
+            ended = await asyncio.wait_for(check(live_id), INLINE_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.debug("capture.live_ended failed: %r", exc)
+            return
+        self._ended_hits = self._ended_hits + 1 if ended else 0
+        if (self._ended_hits >= ENDED_CHECKS and self.state in LIVE_STATES
+                and self.live_id == live_id and not self._paused and self._flow_idle()):
+            self._ended_hits = 0
+            log.warning("live %s was ended on Facebook; ending it here", live_id)
+            await self._begin_end(power_off=False, outro=False)
 
     def _maybe_check_fresh(self) -> None:
         """Every FRESH_CHECK_S while LIVE, run ``capture.check_fresh`` in its own task.
@@ -599,6 +866,8 @@ class Controller:
     # ------------------------------------------------------- state/persistence
 
     def _face_for(self, state: State) -> KeyFace:
+        if self._paused:
+            return KeyFace("PAUSED\n" + _PAUSED_LABELS[state], _PAUSED_BG)
         if state == State.ERROR and self._error_step is not None:
             base = STATUS_FACES[State.ERROR]
             return dataclasses.replace(base, label="ERR\n" + self._error_step[:6].upper())
@@ -621,6 +890,14 @@ class Controller:
             log.exception("cannot save state")
         self._write_status()
         self._show(0, self._face_for(state))
+        if state in LIVE_STATES or state == State.GOING_LIVE:
+            armed = self._end_armed_at
+            if self._end_after_live is not None:
+                self._show(0, STATUS_FACES[State.ENDING])
+            elif armed is not None and self.clock() - armed <= END_CONFIRM_S:
+                self._show(0, _FACE_PRESS_AGAIN)
+        else:
+            self._end_armed_at = None
         for f in self.features:
             hook = getattr(f, "state_changed", None)
             if f.enabled and hook is not None:
@@ -642,6 +919,7 @@ class Controller:
                 live_id=self.live_id,
                 memory=self._memory,
                 features=self.cfg.features(),
+                paused=self._paused,
             )
         except Exception:
             log.exception("cannot write status")
@@ -655,10 +933,12 @@ class Controller:
     def _enter_error(self, step: str, detail: str) -> None:
         self.last_error = f"{step}: {detail}"
         self._error_step = step
+        self._error_at = self.clock()
         log.error("ERROR %s", self.last_error)
         self._transition(State.ERROR)
 
     async def _fail(self, step: str, detail: str) -> None:
+        pending, self._end_after_live = self._end_after_live, None
         directory = self.cfg.paths.failures_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{step}"
         try:
             await self.fb.save_failure(step, directory)
@@ -667,6 +947,21 @@ class Controller:
         except Exception:
             log.exception("save_failure(%s) failed", step)
         self._enter_error(step, detail)
+        if pending == "power":  # power was pressed while going live, and no live started
+            self._spawn_flow_soon(self._shutdown_flow, State.ENDING)
+
+    def _spawn_end_soon(self, *, power_off: bool, outro: bool) -> None:
+        async def start() -> None:
+            await self._begin_end(power_off=power_off, outro=outro)
+
+        self._spawn_feature_task(start())
+
+    def _spawn_flow_soon(self, factory: Callable[[], Awaitable[None]], enter: State) -> None:
+        """Start a flow from inside the running one (which is about to return)."""
+        async def start() -> None:
+            await self._start_flow(factory, enter=enter)
+
+        self._spawn_feature_task(start())
 
     # ------------------------------------------------------------- flow tasks
 
@@ -942,6 +1237,9 @@ class Controller:
             except Exception as exc:
                 log.warning("resume: stream_active failed: %r", exc)
                 await self._sleep(CONNECT_RETRY_S)
+        if not active and self._paused:
+            log.warning("resume: saved live %s, OBS is not streaming; paused, so nothing changes", live_id)
+            return
         if not active:
             log.warning("resume: saved live %s but OBS is not streaming; starting setup", live_id)
             await self._cancel(self._restart)
@@ -982,9 +1280,16 @@ class Controller:
         # The stream is live now: persist LIVE (with live_id) before anything else,
         # so a crash resumes instead of re-running setup, and a power/long-press
         # during the steps below runs the normal live end flow (cancelling this flow).
+        self._obs_retrying = False
         self._transition(State.LIVE)
         # Best effort: nothing below may turn into ERROR.
         await self._feature_hook("live_confirmed", live_id, stream_dir, self._go_live_pressed_at)
+        pending = self._end_after_live
+        if pending is not None:
+            # Ended while going live (two presses, power, or OBS stopped): end it now.
+            log.info("ending the live that was just confirmed (%s)", pending)
+            self._spawn_end_soon(power_off=pending == "power", outro=pending != "obs")
+            return
         await self._best_effort(
             "open_comments", self.fb.open_comments(live_id), CAPTURE_STEP_TIMEOUT_S
         )
@@ -1131,6 +1436,11 @@ class Controller:
             "close_browser", self.fb.close_browser(),
             reserve=END_TAIL_RESERVE_S / 2, floor=END_TAIL_MIN_S,
         )
+        # Both units restart on any exit (Restart=always): stop them so neither comes back.
+        await self._bounded_step(
+            "stop chromium.service", self.system.stop_user_unit("chromium.service"),
+            reserve=0.0, floor=END_TAIL_MIN_S,
+        )
         await self._bounded_step(
             "stop obs.service", self.system.stop_user_unit("obs.service"),
             reserve=0.0, floor=END_TAIL_MIN_S,
@@ -1139,10 +1449,13 @@ class Controller:
 
     # ------------------------------------------------------------ deck cameras
 
+    def _camera_face(self, cam: str) -> KeyFace:
+        bg = _CAMERA_ACTIVE_BG if cam == self._active_camera else _CAMERA_IDLE_BG
+        return KeyFace(_CAMERA_FACES[cam], bg)
+
     def _show_camera_faces(self) -> None:
         for key, cam in _CAMERA_KEYS.items():
-            bg = _CAMERA_ACTIVE_BG if cam == self._active_camera else _CAMERA_IDLE_BG
-            self._show(key, KeyFace(_CAMERA_FACES[cam], bg))
+            self._show(key, self._camera_face(cam))
 
     def _show_autofocus(self) -> None:
         cam = self._active_camera
@@ -1153,22 +1466,69 @@ class Controller:
         else:
             self._show(1, _FACE_AF_OFF)
 
+    def _scene_of(self, cam: str) -> str:
+        scene = self.cfg.cameras[cam].scene
+        return self._scene_alias.get(scene, scene)
+
+    async def _refresh_scene_alias(self) -> bool:
+        """Match the configured camera scenes to OBS's scene names; True if any changed."""
+        request = getattr(self.obs, "request", None)
+        if request is None:
+            return False
+        try:
+            names = await self._bounded("GetSceneList", obs_scene_names(self.obs))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("cannot list OBS's scenes: %r", exc)
+            return False
+        alias: dict[str, str] = {}
+        for cam, c in self.cfg.cameras.items():
+            actual = resolve_scene(c.scene, names)
+            if actual is None:
+                log.warning("camera %s: OBS has no scene %r (scenes: %s)",
+                            cam, c.scene, ", ".join(names))
+            elif actual != c.scene:
+                log.warning("camera %s: using OBS's scene %r for the configured %r",
+                            cam, actual, c.scene)
+                alias[c.scene] = actual
+        changed = alias != self._scene_alias
+        self._scene_alias = alias
+        return changed
+
+    def _on_program_scene(self, name: str) -> None:
+        cam = next((c for c in self.cfg.cameras if self._scene_of(c) == name), None)
+        if cam is None and self.state not in LIVE_STATES:
+            return  # e.g. the holding card: the highlight shows the camera picked for after it
+        if cam != self._active_camera:
+            self._active_camera = cam
+            self._show_camera_faces()
+            self._show_autofocus()
+
     async def _camera_press(self, cam: str) -> None:
         cfg = self.cfg.cameras.get(cam)
         if cfg is None:
             log.warning("no camera %r configured", cam)
             return
-        claimed = self.state not in LIVE_STATES and await self._feature_claims(
-            "select_camera", cfg.scene
-        )
-        try:
-            if not claimed:
-                await self._bounded("set_scene", self.obs.set_scene(cfg.scene))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("set_scene(%s) failed", cfg.scene)
-            return
+        key = next(k for k, c in _CAMERA_KEYS.items() if c == cam)
+        for attempt in (1, 2):
+            scene = self._scene_of(cam)
+            try:
+                claimed = self.state not in LIVE_STATES and await self._feature_claims(
+                    "select_camera", scene
+                )
+                if not claimed:
+                    await self._bounded("set_scene", self.obs.set_scene(scene))
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                missing = isinstance(exc, ObsRequestFailed) and exc.code == CODE_RESOURCE_NOT_FOUND
+                if attempt == 1 and missing and await self._refresh_scene_alias():
+                    continue  # OBS's scene was renamed: try its current name
+                log.warning("camera %s: switching to scene %r failed: %r", cam, scene, exc)
+                self._flash(key, _FACE_NO_SCENE, lambda: self._camera_face(cam))
+                return
         self._active_camera = cam
         try:
             await self._bounded(
@@ -1228,7 +1588,7 @@ class Controller:
         except Exception as exc:
             log.warning("current_scene failed: %r", exc)
             return
-        cam = next((n for n, c in self.cfg.cameras.items() if c.scene == scene), None)
+        cam = next((n for n in self.cfg.cameras if self._scene_of(n) == scene), None)
         if cam is None:
             return
         try:
@@ -1255,6 +1615,6 @@ class Controller:
             log.warning("current_scene failed: %r", exc)
             return "main"
         for name, cam in self.cfg.cameras.items():
-            if cam.scene == scene:
+            if self._scene_of(name) == scene:
                 return name
         return "main"

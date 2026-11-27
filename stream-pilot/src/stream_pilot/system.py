@@ -42,6 +42,16 @@ class SystemCtl:
     async def stop_user_unit(self, unit: str) -> None:
         await _run(self._exec, ["systemctl", "--user", "stop", unit])
 
+    async def set_window_layout(self, enabled: bool) -> None:
+        """The streampilotlayout KWin script: unloaded while paused (runtime only, the
+        config is untouched); a KWin reconfigure loads it again."""
+        if enabled:
+            argv = ["busctl", "--user", "call", "org.kde.KWin", "/KWin", "org.kde.KWin", "reconfigure"]
+        else:
+            argv = ["busctl", "--user", "call", "org.kde.KWin", "/Scripting",
+                    "org.kde.kwin.Scripting", "unloadScript", "s", "streampilotlayout"]
+        await _run(self._exec, argv)
+
     async def stop_user_unit_no_block(self, unit: str) -> None:
         """Queue the stop and return: the unit may take a while to finish."""
         await _run(self._exec, ["systemctl", "--user", "stop", "--no-block", unit])

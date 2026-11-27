@@ -6,7 +6,9 @@ After=graphical-session.target xdg-desktop-portal.service
 [Service]
 ExecStartPre=-/usr/bin/stream-pilot chromium-prep
 ExecStart=/usr/libexec/stream-pilot/chromium-launch about:blank
-Restart=on-failure
+# Always: the host closing Chromium's window (a clean exit) must not leave the PC without it,
+# least of all while live. stream-pilot's power-off stops the unit itself.
+Restart=always
 RestartSec=3
 OOMScoreAdjust=500
 # Soft ceiling (16 GB PC). Facebook's live dashboard, which is the comments column,

@@ -3,7 +3,7 @@
 * **Watermark:** a small text source ("Branding Watermark", a placeholder for a
   logo) in a corner of every camera scene, created over obs-websocket if
   missing; restyle or replace it in OBS.
-* **Outro:** at the end of a live (power button, long press, ``stream-pilot
+* **Outro:** at the end of a live (power button, two status-key presses, ``stream-pilot
   press --long``), the "Outro" scene (a card with ``outro_text``, no
   microphone) is on air for ``outro_s`` seconds before StopStream, while the
   status key counts down. Afterwards the scene that was on air is put back, so
@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable
 from .config import Config
 from .features import Feature
 from .obs_items import Item, Scene, SceneItem, apply_items
+from .scenes import obs_scene_names, resolve_scene
 from .states import STATUS_FACES, KeyFace, State
 
 log = logging.getLogger(__name__)
@@ -83,12 +84,17 @@ class Branding(Feature):
         self.outro_s = max(0.0, min(float(b.outro_s), OUTRO_MAX_S))
         self._before_outro: str | None = None
 
-    def items(self) -> list[Item]:
+    def items(self, scenes: list[str] | None = None) -> list[Item]:
+        """``scenes``: OBS's scene names; a camera scene OBS does not have is skipped
+        (or matched to OBS's spelling of it, see scenes.resolve_scene)."""
         b = self.cfg.branding
         out: list[Item] = []
         for i, cam in enumerate(self.cfg.cameras.values()):
+            scene = cam.scene if scenes is None else resolve_scene(cam.scene, scenes)
+            if scene is None:
+                continue
             out.append(SceneItem(
-                cam.scene, WATERMARK,
+                scene, WATERMARK,
                 kind="text_ft2_source_v2" if i == 0 else None,
                 settings={"text": b.watermark_text, "color1": _WATERMARK_WHITE,
                           "color2": _WATERMARK_WHITE, "outline": True,
@@ -110,7 +116,12 @@ class Branding(Feature):
         return out
 
     async def obs_connected(self) -> None:
-        await apply_items(self.obs, self.items(), True, owner="branding")
+        try:
+            scenes: list[str] | None = await obs_scene_names(self.obs)
+        except Exception as exc:
+            log.warning("branding: cannot list OBS's scenes: %r", exc)
+            scenes = None
+        await apply_items(self.obs, self.items(scenes), True, owner="branding")
 
     async def restore(self) -> None:
         await apply_items(self.obs, self.items(), False, owner="branding")

@@ -11,6 +11,11 @@ from stream_pilot.comment_log import build_report
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
 from stream_pilot.events import (
+    DeckDown,
+    EndRequested,
+    ObsConnected,
+    PauseRequested,
+    ProgramSceneChanged,
     DeckPress,
     ObsStreamState,
     PowerPress,
@@ -105,6 +110,7 @@ class Rig:
         features=(),
         site_extra="",
         sleep=None,
+        pause_flag=None,
     ):
         tpl = EMPTY_SITE if empty_site else SITE
         site = tmp_path / "site.toml"
@@ -133,6 +139,7 @@ class Rig:
             dry_run=dry_run,
             sleep=sleep or self.sleeper,
             features=features(self) if callable(features) else features,
+            pause_flag=pause_flag,
             **({"clock": clock} if clock is not None else {}),
         )
 
@@ -779,6 +786,7 @@ async def test_power_off_while_live_exact_order(make, tmp_path):
         ("sleep", 5),
         ("capture.stop",),
         ("fb.close_browser",),
+        ("system.stop_user_unit", "chromium.service"),
         ("system.stop_user_unit", "obs.service"),
         ("system.poweroff",),
     ]
@@ -830,17 +838,17 @@ async def test_power_in_reconnecting_ends_stream_and_powers_off(rig):
     await rig.c.handle(PowerPress())
     await rig.settle()
     assert rig.obs.calls[0] == ("obs.stop_stream",)
-    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.system.calls == [("system.stop_user_unit", "chromium.service"), ("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
 
 
-@pytest.mark.parametrize("state", [State.READY, State.ERROR, State.STARTING, State.GOING_LIVE])
+@pytest.mark.parametrize("state", [State.READY, State.ERROR, State.STARTING])
 async def test_power_in_non_live_state_closes_and_powers_off_without_stopping_stream(rig, state):
     rig.c.state = state
     await rig.c.handle(PowerPress())
     assert rig.c.state == State.ENDING
     await rig.settle()
     assert rig.fb.calls == [("fb.close_browser",)]
-    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.system.calls == [("system.stop_user_unit", "chromium.service"), ("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
     assert "obs.stop_stream" not in rig.names(rig.obs)
     assert rig.capture.calls == []
 
@@ -885,7 +893,7 @@ async def test_long_press_ends_stream_without_power_off_and_returns_to_setup(mak
     rig = make(shared=True)
     await rig.to_live()
     rig.clear()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     assert rig.c.state == State.ENDING
     await rig.settle()
     assert rig.c.state == State.READY
@@ -906,7 +914,7 @@ async def test_long_press_ends_stream_without_power_off_and_returns_to_setup(mak
 @pytest.mark.parametrize("state", [State.READY, State.ERROR, State.LOGIN, State.ENDING, State.GOING_LIVE])
 async def test_long_press_ignored_outside_live(rig, state):
     rig.c.state = state
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c.state == state
     assert rig.fb.calls == [] and rig.obs.calls == [] and rig.capture.calls == []
@@ -1013,6 +1021,7 @@ async def test_obs_gave_up_runs_restart_loop_without_stop(make):
     await rig.to_live()
     rig.clear()
     rig.obs._start = Script([RuntimeError("fail"), None])
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=True))  # OBS retried first
     rig.obs.active = False
     await rig.c.handle(ObsStreamState(active=False))
     assert rig.c.state == State.RECONNECTING
@@ -1050,6 +1059,7 @@ async def test_obs_recovery_event_cancels_restart_loop(make):
     rig = make()
     await rig.to_live()
     rig.obs._start = Script(RuntimeError("down"))
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=True))
     rig.obs.active = False
     await rig.c.handle(ObsStreamState(active=False))
     await asyncio.sleep(0)
@@ -1236,7 +1246,7 @@ async def test_scene_failure_skips_autofocus(make):
     await rig.c.boot()
     await rig.c.handle(DeckPress(5))
     assert rig.camera.calls == []
-    assert rig.deck.faces[5].bg == "#333333"
+    assert rig.deck.faces[5].label == "NO\nSCENE"
 
 
 async def test_camera_keys_work_while_live_without_changing_state(rig):
@@ -1347,6 +1357,7 @@ async def test_power_during_slow_open_comments_runs_normal_end_flow(make):
         ("obs.stream_active",),
         ("capture.stop",),
         ("fb.close_browser",),
+        ("system.stop_user_unit", "chromium.service"),
         ("system.stop_user_unit", "obs.service"),
         ("system.poweroff",),
     ]
@@ -1358,7 +1369,7 @@ async def test_long_press_during_slow_open_comments_ends_without_power_off(rig):
     await _live_with_hung_open_comments(rig)
     rig.clear()
     rig.fb.gates.clear()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c.state == State.READY
     assert rig.obs.calls[0] == ("obs.stop_stream",)
@@ -1389,11 +1400,11 @@ async def test_post_go_live_steps_run_in_live_after_open_comments_released(rig):
 async def test_power_press_during_long_press_end_powers_off_instead_of_setup(rig):
     await rig.to_live()
     rig.clear()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     assert rig.c.state == State.ENDING
     await rig.c.handle(PowerPress())  # used to be dropped
     await rig.settle()
-    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.system.calls == [("system.stop_user_unit", "chromium.service"), ("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
     assert rig.fb.calls == [("fb.close_browser",)]  # no setup flow started
     assert rig.obs.calls.count(("obs.stop_stream",)) == 1
     assert rig.c.state == State.ENDING
@@ -1404,12 +1415,12 @@ async def test_power_press_after_long_press_end_branch_point_shuts_down(make):
     await rig.to_live()
     rig.clear()
     rig.fb.gates["reachable"] = asyncio.Event()  # setup stalls right after the branch point
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.wait_call(rig.fb, "fb.reachable")
     assert rig.c.state == State.ENDING
     await rig.c.handle(PowerPress())
     await rig.settle()
-    assert rig.system.calls == [("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
+    assert rig.system.calls == [("system.stop_user_unit", "chromium.service"), ("system.stop_user_unit", "obs.service"), ("system.poweroff",)]
     assert rig.fb.calls.count(("fb.close_browser",)) == 1
     assert "fb.setup_live" not in rig.names(rig.fb)
 
@@ -1417,7 +1428,7 @@ async def test_power_press_after_long_press_end_branch_point_shuts_down(make):
 async def test_two_power_presses_during_long_press_end_power_off_once(rig):
     await rig.to_live()
     rig.clear()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.c.handle(PowerPress())
     await rig.c.handle(PowerPress())
     await rig.settle()
@@ -1458,7 +1469,7 @@ async def test_hung_set_scene_does_not_block_handle(rig, short_inline_timeout):
     rig.obs.gates["set_scene"] = asyncio.Event()
     await asyncio.wait_for(rig.c.handle(DeckPress(5)), 2)
     assert rig.camera.calls == []
-    assert rig.deck.faces[5].bg == "#333333"
+    assert rig.deck.faces[5].label == "NO\nSCENE"
 
 
 async def test_hung_autofocus_does_not_block_handle(rig, short_inline_timeout):
@@ -1564,7 +1575,7 @@ async def test_long_press_end_with_hung_capture_stop_returns_to_setup(
 ):
     await rig.to_live()
     rig.capture.gates["stop"] = asyncio.Event()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c.state == State.READY
     assert ("system.poweroff",) not in rig.system.calls
@@ -1754,7 +1765,7 @@ async def test_end_flow_cancels_a_pending_reattach(make):
     cap.gates["start"] = asyncio.Event()
     await rig.c.handle(Tick())
     await rig.wait_call(cap, "capture.start")
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert ("capture.stop",) in cap.calls
     assert rig.c._reattach is None or rig.c._reattach.done()
@@ -1779,7 +1790,7 @@ async def test_ending_tick_never_reattaches(make):
     await rig.to_live()
     cap.is_healthy = False
     rig.obs.gates["stop_stream"] = asyncio.Event()  # the end flow parks in ENDING
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.wait_state(State.ENDING)
     cap.calls.clear()
     await rig.c.handle(Tick())
@@ -1839,7 +1850,7 @@ async def test_end_flow_is_not_blocked_by_a_stuck_reattach(make, short_cancel_wa
     await rig.c.handle(Tick())
     await rig.wait_call(cap, "capture.start")
     task = rig.c._reattach
-    await asyncio.wait_for(rig.c.handle(DeckPress(0, long=True)), 2)  # must not hang
+    await asyncio.wait_for(rig.c.handle(EndRequested()), 2)  # must not hang
     await _poll(lambda: ("obs.stop_stream",) in rig.obs.calls)
     assert "abandon" in caplog.text
     await _kill(task)
@@ -1987,7 +1998,7 @@ async def test_reattach_backoff_resets_for_a_new_stream(make):
         clock.t -= 995  # stay inside the current backoff window
     assert rig.c._reattach_failures >= 1
     # the stream ends (long press) and a new one goes live
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c._reattach_failures == 0 and rig.c._reattach_next_try == 0.0
     cap._start = Script(None)
@@ -2148,7 +2159,7 @@ async def test_end_flow_cancels_a_running_fresh_check(make):
     await tick()
     await tick(controller_mod.FRESH_CHECK_S, settle=False)
     await rig.wait_call(cap, "capture.check_fresh")
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert ("capture.check_fresh.cancelled",) in cap.calls
     assert cap.calls.index(("capture.check_fresh.cancelled",)) < cap.calls.index(("capture.stop",))
@@ -2160,7 +2171,7 @@ async def test_fresh_check_schedule_restarts_for_a_new_live(make):
     await tick()
     await tick(controller_mod.FRESH_CHECK_S)
     assert len(_fresh_checks(cap)) == 1
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     await rig.c.handle(DeckPress(0))
     await rig.settle()
@@ -2180,3 +2191,396 @@ async def test_no_fresh_check_while_reconnecting(make):
     rig.c.state = State.RECONNECTING
     await tick(controller_mod.FRESH_CHECK_S * 2)
     assert _fresh_checks(cap) == []
+
+
+# ------------------------------------- states-and-inputs gaps (2026-11-26 spec)
+
+
+async def _live_clock(make, **kw):
+    rig = make(**kw)
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.to_live()
+    rig.clear()
+    return rig, clock
+
+
+async def test_g1_one_status_press_while_live_only_arms(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.deck.faces[0].label == "PRESS\nAGAIN"
+    assert "obs.stop_stream" not in rig.names(rig.obs)
+
+
+async def test_g1_second_press_within_five_seconds_ends_the_live(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(DeckPress(0))
+    clock.t += 4.9
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert ("obs.stop_stream",) in rig.obs.calls
+    assert ("system.poweroff",) not in rig.system.calls
+    assert rig.c.state == State.READY  # back to setup, then ready again
+
+
+async def test_g1_a_late_second_press_arms_again(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(DeckPress(0))
+    clock.t += 5.1
+    rig.c._disarm_end_if_expired()
+    assert rig.deck.faces[0] == STATUS_FACES[State.LIVE]
+    await rig.c.handle(DeckPress(0))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.deck.faces[0].label == "PRESS\nAGAIN"
+
+
+async def test_g1_a_held_key_counts_as_a_press(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    await rig.c.handle(DeckPress(0, long=True))
+    await rig.settle()
+    assert ("obs.stop_stream",) in rig.obs.calls
+
+
+async def test_g1_double_press_while_reconnecting_ends_without_outro(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=True))
+    assert rig.c.state == State.RECONNECTING
+    await rig.c.handle(DeckPress(0))
+    await rig.c.handle(DeckPress(0))
+    assert rig.c.state == State.ENDING
+    assert rig.c._outro is False
+    await rig.settle()
+
+
+async def test_g1_double_press_while_going_live_ends_once_live(make):
+    rig = make()
+    await rig.to_ready()
+    rig.fb.gates["go_live"] = asyncio.Event()
+    await rig.c.handle(DeckPress(0))
+    await rig.wait_call(rig.fb, "fb.go_live")
+    await rig.c.handle(DeckPress(0))
+    await rig.c.handle(DeckPress(0))
+    assert rig.c.state == State.GOING_LIVE
+    assert rig.deck.faces[0] == STATUS_FACES[State.ENDING]
+    rig.fb.gates["go_live"].set()
+    await rig.settle()
+    assert rig.names(rig.fb).count("fb.go_live") == 1
+    assert ("obs.stop_stream",) in rig.obs.calls
+    assert rig.c.state == State.READY
+
+
+async def test_g1_press_long_cli_still_ends_at_once(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(EndRequested())
+    assert rig.c.state == State.ENDING
+    await rig.settle()
+
+
+async def test_g2_retry_while_live_flashes_busy(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(DeckPress(3))
+    assert rig.deck.faces[3].label == "BUSY"
+    assert rig.c.state == State.LIVE
+
+
+async def test_g3_camera_keys_ignored_while_ending(make):
+    rig, clock = await _live_clock(make)
+    rig.c.state = State.ENDING
+    await rig.c.handle(DeckPress(5))
+    assert "obs.set_scene" not in rig.names(rig.obs)
+
+
+async def test_g4_renamed_obs_scene_is_matched(make):
+    rig = make()
+    obs = rig.obs
+    obs.model.scenes["Jewelry Camera"] = obs.model.scenes.pop("Jewlery Camera")
+    await rig.to_live()
+    await rig.c.handle(ObsConnected())
+    await rig.settle()
+    await rig.c.handle(DeckPress(5))
+    assert ("obs.set_scene", "Jewelry Camera") in obs.calls
+    assert rig.deck.faces[5].bg == "#1f5fbf"
+
+
+async def test_g4_press_refreshes_names_when_obs_says_no_such_scene(make):
+    from stream_pilot.obs import CODE_RESOURCE_NOT_FOUND, ObsRequestFailed
+
+    missing = ObsRequestFailed("SetCurrentProgramScene", CODE_RESOURCE_NOT_FOUND, "no such scene")
+    rig = make(obs=FakeObs(set_scene_raises=[missing, None]))
+    rig.obs.model.scenes["Jewelry Camera"] = rig.obs.model.scenes.pop("Jewlery Camera")
+    await rig.to_live()
+    await rig.c.handle(DeckPress(5))
+    assert [c for c in rig.obs.calls if c[0] == "obs.set_scene"][-2:] == [
+        ("obs.set_scene", "Jewlery Camera"), ("obs.set_scene", "Jewelry Camera")]
+
+
+async def test_g5_camera_highlight_follows_obs(make):
+    rig, clock = await _live_clock(make)
+    await rig.c.handle(ProgramSceneChanged("Jewlery Camera"))
+    assert rig.deck.faces[5].bg == "#1f5fbf" and rig.deck.faces[2].bg == "#333333"
+    await rig.c.handle(ProgramSceneChanged("Black"))
+    assert rig.deck.faces[5].bg == "#333333" and rig.deck.faces[2].bg == "#333333"
+
+
+async def test_g6_power_while_going_live_ends_the_live_then_powers_off(make):
+    rig = make()
+    await rig.to_ready()
+    rig.fb.gates["go_live"] = asyncio.Event()
+    await rig.c.handle(DeckPress(0))
+    await rig.wait_call(rig.fb, "fb.go_live")
+    await rig.c.handle(PowerPress())
+    assert rig.c.state == State.GOING_LIVE  # the click is not interrupted
+    rig.fb.gates["go_live"].set()
+    await rig.settle()
+    names = rig.names(rig.obs)
+    assert "obs.stop_stream" in names
+    assert rig.system.calls[-1] == ("system.poweroff",)
+
+
+async def test_g6_power_while_going_live_that_fails_still_powers_off(make):
+    rig = make(fb=FakeFacebook(go_live_raises=StepFailed("go_live", "no button")))
+    await rig.to_ready()
+    rig.fb.gates["go_live"] = asyncio.Event()
+    await rig.c.handle(DeckPress(0))
+    await rig.wait_call(rig.fb, "fb.go_live")
+    await rig.c.handle(PowerPress())
+    rig.fb.gates["go_live"].set()
+    await rig.settle()
+    assert ("system.poweroff",) in rig.system.calls
+
+
+async def test_g7_stop_streaming_in_obs_while_live_ends_the_live(make):
+    rig, clock = await _live_clock(make)
+    rig.obs.active = False
+    await rig.c.handle(ObsStreamState(active=False))
+    assert rig.c.state == State.ENDING
+    assert rig.c._outro is False
+    await rig.settle()
+    assert ("obs.start_stream",) not in rig.obs.calls[: rig.obs.calls.index(("obs.stop_stream",))]
+    assert rig.c.state == State.READY
+
+
+async def test_g7_stream_stopped_while_going_live_ends_once_live(make):
+    rig = make()
+    await rig.to_ready()
+    rig.fb.gates["go_live"] = asyncio.Event()
+    await rig.c.handle(DeckPress(0))
+    await rig.wait_call(rig.fb, "fb.go_live")
+    await rig.c.handle(ObsStreamState(active=False))
+    rig.fb.gates["go_live"].set()
+    await rig.settle()
+    assert ("obs.stop_stream",) in rig.obs.calls
+    assert rig.c.state == State.READY
+
+
+async def test_g14_error_retries_by_itself_after_two_minutes(make):
+    rig = make(fb=FakeFacebook(setup_raises=[StepFailed("setup")] * 2 + [None]))
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.c.boot()
+    await rig.settle()
+    assert rig.c.state == State.ERROR
+    clock.t += controller_mod.ERROR_RETRY_S - 1
+    await rig.c.handle(Tick())
+    assert rig.c.state == State.ERROR
+    clock.t += 1
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.READY
+
+
+# ---------------------------------------------------------------- pause
+
+
+@pytest.fixture
+def quick_hold(monkeypatch):
+    monkeypatch.setattr(controller_mod, "PAUSE_HOLD_S", 0.12)
+
+
+async def _hold_retry(rig, seconds):
+    await rig.c.handle(DeckDown(3))
+    await asyncio.sleep(seconds)
+    while not rig.c._queue.empty():
+        await rig.c.handle(rig.c._queue.get_nowait())
+    await rig.c.handle(DeckPress(3, long=seconds >= 3))
+
+
+async def test_pause_holding_retry_pauses_without_a_retry(make, quick_hold):
+    rig = make()
+    await rig.to_ready()
+    rig.clear()
+    await _hold_retry(rig, 0.2)
+    assert rig.c._paused
+    assert rig.deck.faces[0].label == "PAUSED\nREADY"
+    assert ("system.set_window_layout", False) in rig.system.calls
+    assert "fb.setup_live" not in rig.names(rig.fb)  # the release did not retry
+    assert rig.status_json.get("paused") is True
+
+
+async def test_pause_short_retry_press_shows_no_countdown_and_retries(make, quick_hold):
+    rig = make()
+    await rig.to_ready()
+    await rig.c.handle(DeckDown(3))
+    await rig.c.handle(DeckPress(3))
+    await asyncio.sleep(0.2)
+    assert not rig.c._paused
+    assert rig.deck.faces[3].label == "RETRY"
+    await rig.settle()
+
+
+async def test_paused_ready_is_left_alone(make):
+    rig = make()
+    await rig.to_ready()
+    await rig.c.handle(PauseRequested())
+    rig.clear()
+    rig.obs.active = False  # the host stopped the pre-roll in OBS
+    await rig.c.handle(ObsStreamState(active=False))
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.READY
+    assert rig.fb.calls == [] and "obs.start_stream" not in rig.names(rig.obs)
+
+
+async def test_paused_live_is_not_restarted_or_ended(make):
+    rig = make()
+    await rig.to_live()
+    await rig.c.handle(PauseRequested())
+    rig.clear()
+    rig.obs.active = False
+    await rig.c.handle(ObsStreamState(active=False))
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    assert rig.obs.calls == [] and rig.capture.calls == []
+
+
+async def test_paused_error_is_not_retried(make):
+    rig = make(fb=FakeFacebook(setup_raises=[StepFailed("setup")] * 2 + [None]))
+    clock = FakeClock()
+    rig.c.clock = clock
+    await rig.c.boot()
+    await rig.settle()
+    await rig.c.handle(PauseRequested())
+    clock.t += controller_mod.ERROR_RETRY_S * 3
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.ERROR
+
+
+async def test_pause_stops_a_running_setup_and_resume_runs_it_again(make):
+    rig = make(fb=FakeFacebook(logged_in=False))
+    await rig.c.boot()
+    await rig.wait_state(State.LOGIN)
+    await rig.c.handle(PauseRequested())
+    calls = len(rig.fb.calls)
+    await asyncio.sleep(0.02)
+    assert len(rig.fb.calls) == calls  # login polling stopped
+    rig.fb._logged_in = Script(True)
+    await rig.c.handle(DeckPress(3))  # RETRY resumes
+    await rig.settle()
+    assert not rig.c._paused
+    assert ("system.set_window_layout", True) in rig.system.calls
+    assert rig.c.state == State.READY
+
+
+async def test_resume_ends_a_live_whose_stream_was_stopped(make):
+    rig = make()
+    await rig.to_live()
+    await rig.c.handle(PauseRequested())
+    rig.obs.active = False
+    await rig.c.handle(ObsStreamState(active=False))
+    await rig.c.handle(PauseRequested())
+    await rig.settle()
+    assert rig.c.state == State.READY  # ended (no outro), then setup
+    assert rig.c._outro is False
+
+
+async def test_explicit_actions_still_work_while_paused(make):
+    rig = make()
+    await rig.to_ready()
+    await rig.c.handle(PauseRequested())
+    await rig.c.handle(DeckPress(0))  # Go live
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+    await rig.c.handle(DeckPress(5))
+    assert ("obs.set_scene", "Jewlery Camera") in rig.obs.calls
+
+
+async def test_pause_survives_a_restart_but_not_a_reboot(make, tmp_path):
+    flag = tmp_path / "run" / "stream-pilot" / "paused"
+    rig = make(pause_flag=flag)
+    await rig.to_ready()
+    await rig.c.handle(PauseRequested())
+    assert flag.exists()
+    again = make(pause_flag=flag)  # stream-pilot restarted
+    await again.c.boot()
+    await again.settle()
+    assert again.c._paused and again.c.state == State.STARTING
+    assert again.fb.calls == []
+    assert again.deck.faces[0].label == "PAUSED\nBOOT"
+    await again.c.handle(PauseRequested())
+    assert not flag.exists()
+    await again.settle()
+    assert again.c.state == State.READY
+
+
+# ---------------------------------------------- G-12: live ended on Facebook
+
+
+class EndedCapture(FakeCapture):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.ended = False
+
+    async def live_ended(self, live_id) -> bool:
+        self.calls.append(("capture.live_ended", live_id))
+        return self.ended
+
+
+async def test_g12_live_ended_on_facebook_is_ended_here_after_two_checks(make):
+    cap = EndedCapture()
+    rig = make(capture=cap)
+    await rig.to_live()
+    await rig.c.handle(ObsStreamState(active=True, reconnecting=True))  # OBS lost Facebook
+    cap.ended = True
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.RECONNECTING  # one sighting is not enough
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert ("obs.stop_stream",) in rig.obs.calls
+    assert rig.c.state == State.READY
+
+
+async def test_g12_a_single_sighting_resets(make):
+    cap = EndedCapture()
+    rig = make(capture=cap)
+    await rig.to_live()
+    cap.ended = True
+    await rig.c.handle(Tick())
+    await rig.settle()
+    cap.ended = False
+    await rig.c.handle(Tick())
+    await rig.settle()
+    cap.ended = True
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert rig.c.state == State.LIVE
+
+
+async def test_g12_not_while_paused(make):
+    cap = EndedCapture()
+    rig = make(capture=cap)
+    await rig.to_live()
+    await rig.c.handle(PauseRequested())
+    cap.ended = True
+    for _ in range(3):
+        await rig.c.handle(Tick())
+        await rig.settle()
+    assert rig.c.state == State.LIVE

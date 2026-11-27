@@ -111,6 +111,18 @@ def cmd_press(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_pause(_args: argparse.Namespace) -> int:
+    """Pause stream-pilot (it changes nothing until resumed), or resume it."""
+    try:
+        return _run_command(
+            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", "SIGRTMIN+1",
+             "stream-pilot.service"]
+        )
+    except OSError as exc:
+        print(f"pause failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     # Run by greenboot: any failure here (even a config error) must be a
     # clean "unhealthy" exit code rather than a traceback.
@@ -322,6 +334,11 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_press,
             "press the status key: GO LIVE when green; --long ends a live without powering off",
         ),
+        "pause": (
+            cmd_pause,
+            "pause stream-pilot (it changes nothing: no setup, restarts or window moves) "
+            "or resume it; the status key shows PAUSED",
+        ),
         "health": (cmd_health, "wait for the system to be healthy"),
         "seed-obs": (cmd_seed_obs, "seed the OBS configuration"),
         "chromium-prep": (cmd_chromium_prep, "clear Chromium crash flags"),
@@ -382,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     parsers["press"].add_argument(
         "--long",
         action="store_true",
-        help="a long press (3 s hold): while live, ends the live and returns to setup",
+        help="while live, end the live at once and return to setup (on the deck: two presses)",
     )
     parsers["seed-obs"].add_argument(
         "--reset-scenes",

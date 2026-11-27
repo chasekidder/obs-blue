@@ -6,6 +6,8 @@ Playwright objects are replaced by tiny fakes; HTTP checks use a local
 
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 import asyncio
 import dataclasses
 import http.server
@@ -768,7 +770,7 @@ class FakeCdp:
         self.connected = True
         self.driver_dead = False
 
-    async def dashboard_page(self):
+    async def dashboard_page(self, adopt=()):
         if not self.connected:
             raise BrowserNotConnected("browser is not connected")
         return self.dashboard
@@ -898,7 +900,8 @@ async def test_facebook_adapter_open_comments_uses_template_and_parks_dashboard(
     await fb.open_comments(LIVE_ID)
     assert cdp.opened == [comments_url(cfg, LIVE_ID)]
     await fb.park_dashboard()
-    assert cdp.dashboard.gotos == ["about:blank"]
+    assert len(cdp.dashboard.gotos) == 1 and cdp.dashboard.gotos[0].startswith(browser_mod.PARK_URL)
+    assert "stream-pilot" in unquote(cdp.dashboard.gotos[0])
 
 
 async def test_facebook_adapter_records_the_comments_popout_with_record_dir(cfg, monkeypatch):
@@ -1661,3 +1664,51 @@ async def test_cancel_during_playwright_start_does_not_leak_the_driver(cfg, monk
     await asyncio.sleep(0.2)
     assert pw.stop_called  # the late-started driver was stopped
     assert not b.is_connected
+
+
+# ------------------------------------------- the host's own tabs (2026-11-26)
+
+
+def _create_target_adds_pages(ctx, fb):
+    async def on_send(method, params):
+        if method == "Target.createTarget":
+            ctx.pages.append(FakePage(params["url"]))
+
+    fb.on_send = on_send
+
+
+async def test_closed_dashboard_tab_is_replaced_by_a_new_background_tab_not_the_hosts(cfg):
+    ours = FakePage("https://www.facebook.com/live/producer/?x=1")
+    b, ctx, fb = make_browser(cfg, [ours])
+    _create_target_adds_pages(ctx, fb)
+    assert await b.dashboard_page(adopt=("https://www.facebook.com/live/producer/",)) is ours
+    hosts = FakePage("https://www.google.com/search?q=lamp")
+    blank = FakePage("about:blank")  # the host's empty new tab
+    ctx.pages += [hosts, blank]
+    await ours.close()
+    page = await b.dashboard_page(adopt=("https://www.facebook.com/live/producer/",))
+    assert page not in (hosts, blank, ours)
+    assert any(c[0] == "Target.createTarget" and c[1].get("background") for c in fb.calls)
+
+
+async def test_only_its_own_pages_are_adopted_after_a_connect(cfg):
+    hosts = FakePage("https://www.google.com/")
+    start = FakePage("about:blank")
+    b, ctx, fb = make_browser(cfg, [hosts, start])
+    assert await b.dashboard_page() is start
+
+
+async def test_a_host_tab_is_never_adopted_even_right_after_a_connect(cfg):
+    hosts = FakePage("https://www.google.com/")
+    b, ctx, fb = make_browser(cfg, [hosts])
+    _create_target_adds_pages(ctx, fb)
+    page = await b.dashboard_page()
+    assert page is not hosts
+
+
+async def test_connect_gives_downloads_back_to_chromium(cfg, fake_playwright):
+    pw = _FakePw(browser=FakeBrowser(FakeContext()))
+    fake_playwright["pw"] = pw
+    b = CdpBrowser(cfg.cdp)
+    await b.connect()
+    assert ("Browser.setDownloadBehavior", {"behavior": "default"}) in pw.browser.calls

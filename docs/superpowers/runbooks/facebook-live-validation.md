@@ -120,7 +120,7 @@ Pass criteria for part A: the status key reaches green `GO LIVE`, no failure fol
    ```
    systemctl --user start stream-pilot
    ```
-2. Wait for the green `GO LIVE` key, then press it **once** (a short press; a press of 3 seconds or more is the "end" gesture). Over SSH, `stream-pilot press` does the same.
+2. Wait for the green `GO LIVE` key, then press it **once**. Over SSH, `stream-pilot press` does the same.
 3. Check, within the first minute:
    - The key goes blinking blue, then red `LIVE` with the elapsed time.
    - The Facebook **comments column opens as a borderless column to the right of OBS**, on top of everything, with no title bar (KWin rule in `/etc/xdg/kwinrulesrc`). It is the live's dashboard showing only its Comments panel (heading "Comments", the comments, a "Write a comment…" box); seeing the dashboard's sidebar or widgets instead means the watcher did not pin the panel.
@@ -202,14 +202,14 @@ If `[diagnostics]` is on: while live, `systemctl --user list-units 'stream-pilot
 
 Comments column check (always on): while live and no new comment was captured for 90 s, the controller compares the column with a fresh copy of the live's comments in a hidden tab (journal: `comments column is up to date (N comment(s) on Facebook)`). If Facebook shows comments the column never delivered, it reloads the column (journal: `comments column missed ...; reloading it`). Post a comment from your phone after a quiet minute and check that it reaches the column.
 
-### 6. End with a long-press
+### 6. End with the status key (two presses)
 
-1. While live, **press and hold the status key for 3 seconds** (`deck.long_press_s = 3.0`), then release. Over SSH, `stream-pilot press --long` does the same.
+1. While live, **press the status key once**: it shows a blinking `PRESS AGAIN`. **Press it again within 5 seconds.** One press alone ends nothing (after 5 s the key shows `LIVE` again). Over SSH, `stream-pilot press --long` ends at once.
 2. Expected: the key shows red `ENDING`, OBS stops streaming, then the controller returns to setup (`SETUP`, then green `GO LIVE`) without powering off.
 3. In Facebook (phone or other PC), check that the live **ended by itself**, with no manual "End live video". This works because Facebook's "end live when streaming stops" setting is on; stream-pilot waits 5 seconds (`fb_end_wait_s`) after OBS stops.
 4. If the live is still running on Facebook, end it by hand in Facebook, and note it as a failure. Check the setup screenshot from step 4 for whether that setting was visible.
 
-After a long-press end, the controller runs setup again (the same flow as part A), so the key goes blue and then green.
+After this end, the controller runs setup again (the same flow as part A), so the key goes blue and then green.
 
 ### 7. End with the power button
 
@@ -285,7 +285,7 @@ These come from the spec's "Verify on hardware" table. Each row has a check and 
 |---|---|---|---|---|
 | H1 | OBS RPM uses VAAPI H.264 | OBS log (see "Encoder and Stream Deck commands" below) | The profile uses `ffmpeg_vaapi_tex` (zero-copy VAAPI H.264, Level 4.1, CBR 4500, keyframe every 2 s). Check that the log shows a working VAAPI/libva device and no error about the encoder when streaming starts. | Try QuickSync; otherwise the pinned OBS Flatpak (not x264). |
 | H2 | Pre-roll preview survives until `Go live` | Leave the PC at green `GO LIVE` for 10-20 minutes, then press | Check that the key is still green and the live starts. Facebook can mark the preview lost; stream-pilot then re-runs setup on its own (`journalctl --user -u stream-pilot -f`). | Start the OBS stream on button press instead (code change). |
-| H3 | Parked dashboard does not affect live/auto-end | Part B steps 5-6 | The live stays up for 2 hours with the dashboard parked, and Facebook auto-ends on long-press. | Keep the dashboard open, reload it every 30 minutes. |
+| H3 | Parked dashboard does not affect live/auto-end | Part B steps 5-6 | The live stays up for 2 hours with the dashboard parked, and Facebook auto-ends after the two-press end. | Keep the dashboard open, reload it every 30 minutes. |
 | H4 | SSN extension force-installs by policy | `chrome://policy` and `chrome://extensions` in the stream-pilot Chromium | Check that the policy `ExtensionInstallForcelist` shows two entries and both extensions are installed and enabled (SSN, uBlock Origin Lite). | Ship it unpacked and load it at startup. |
 | H5 | Popout legible at a zoom that fits beside the portrait preview | Part B step 5, zoom item 1 | The layout script gives OBS the left 70% and the column the right 30% of the screen (at 1920x1080: 1344 px and 576 px). Check that comments are readable at some zoom. | Narrow the OBS area or shrink the preview scale. |
 | H6 | Facebook comment IDs available | Part B step 5, comment IDs item | Check that `fb_comment_id` is filled. | In-order alignment dedupe only (already designed). |

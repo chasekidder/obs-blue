@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pause / resume stream-pilot
+Comment=While paused, stream-pilot changes nothing by itself (no setup, restarts or window moves); click again to resume
+Exec=/usr/bin/stream-pilot pause
+Icon=media-playback-pause
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;pause;maintenance;

@@ -79,6 +79,7 @@ class StatusWriter:
         live_id: str | None,
         memory: dict | None,
         features: dict[str, bool] | None = None,
+        paused: bool = False,
     ) -> None:
         data = {
             "state": state,
@@ -91,4 +92,6 @@ class StatusWriter:
         # Optional (readers must not require it): older images ignore it.
         if features is not None:
             data["features"] = features
+        if paused:
+            data["paused"] = True
         _atomic_write_json(self.path, data)

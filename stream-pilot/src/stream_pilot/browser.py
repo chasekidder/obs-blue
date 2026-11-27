@@ -58,6 +58,13 @@ _IGNORED_SCHEMES = ("chrome-extension://", "devtools://")
 # Never adopt these as "the window we just opened": a failed-to-load extension page is chrome-error://.
 _NOT_ADOPTABLE_SCHEMES = _IGNORED_SCHEMES + ("chrome-error://",)
 
+# What stream-pilot's own tab shows while it is not needed (during a live).
+PARK_URL = "data:text/html;charset=utf-8,"
+PARK_HTML = (
+    "<title>stream-pilot</title><body style='font:22px sans-serif;margin:3em;color:#444'>"
+    "<p>stream-pilot uses this tab for Facebook Live.</p>"
+    "<p>For anything else, open a new tab (+) or a new window.</p></body>"
+)
 # Marks the tabs read_in_background opens (one number per tab).
 _READ_MARKER = "stream-pilot-read"
 _READ_IDS = itertools.count(1)
@@ -199,6 +206,8 @@ class CdpBrowser:
         self.ssn_reopen_wait_s = 15.0  # how long SSN gets to reopen its background page itself
         self._helper_pages: list["Page"] = []
         self.popout_pages: list["Page"] = []
+        self._dashboard: "Page | None" = None
+        self._may_adopt = True
         self._pw: Any = None
         self._browser: "Browser | None" = None
         self._context: "BrowserContext | None" = None
@@ -270,8 +279,25 @@ class CdpBrowser:
             self._bind(pw, browser, context)
             self.popout_pages = []
             self._helper_pages = []
+            self._dashboard = None
+            self._may_adopt = True
             log.info("connected to Chromium at %s", self.cfg.url)
+        await self._restore_downloads()
         await self._open_ssn_helper()
+
+    async def _restore_downloads(self) -> None:
+        """Give downloads back to Chromium.
+
+        Playwright's CDP attach switches the browser to "allowAndName" into a temp
+        directory of its own: files got random names, "Show in folder" and opening
+        them failed (2026-11-26). With "default" Chromium saves to ~/Downloads under
+        the real name, as without stream-pilot.
+        """
+        try:
+            session = await self._browser_session()
+            await session.send("Browser.setDownloadBehavior", {"behavior": "default"})
+        except Exception as exc:
+            log.warning("cannot restore Chromium's own download handling: %r", exc)
 
     @staticmethod
     def _stop_late_driver(start_task: "asyncio.Future") -> None:
@@ -344,13 +370,48 @@ class CdpBrowser:
     def _open_pages(self) -> list["Page"]:
         return [p for p in self.context.pages if not p.is_closed()]
 
-    async def dashboard_page(self) -> "Page":
-        """First ordinary page of the context (not an extension/devtools page or the popout); created if none."""
-        for page in self._open_pages():
-            url = page.url or ""
-            if url.startswith(_IGNORED_SCHEMES) or page in self.popout_pages or page in self._helper_pages:
-                continue
+    async def dashboard_page(self, adopt: tuple[str, ...] = ()) -> "Page":
+        """stream-pilot's own tab (the producer page, parked while live).
+
+        Remembered while connected. Right after a connect it may adopt an open tab
+        that is clearly its own (Chromium's start page ``about:blank``, the parked
+        page, or a URL starting with one of ``adopt``); otherwise, and whenever its
+        tab was closed, a new tab is opened in the background. The host's tabs are
+        never taken.
+        """
+        page = self._dashboard
+        if page is not None and not page.is_closed() and page in self._open_pages():
             return page
+        self._dashboard = None
+        if self._may_adopt:
+            self._may_adopt = False
+            for candidate in self._open_pages():
+                url = candidate.url or ""
+                if (candidate in self.popout_pages or candidate in self._helper_pages
+                        or url.startswith(_IGNORED_SCHEMES)):
+                    continue
+                if url in ("", "about:blank") or url.startswith(PARK_URL) or any(
+                    url.startswith(a) for a in adopt if a
+                ):
+                    self._dashboard = candidate
+                    return candidate
+        self._dashboard = await self._new_background_page()
+        return self._dashboard
+
+    async def _new_background_page(self) -> "Page":
+        """A new tab that does not come to the front (the host may be using another one)."""
+        marker = f"#{_READ_MARKER}-{next(_READ_IDS)}"
+        try:
+            session = await self._browser_session()
+            await session.send("Target.createTarget", {"url": "about:blank" + marker, "background": True})
+            page = await self._wait_for_page("about:blank", self.fallback_wait_s, contains=marker)
+            if page is not None:
+                return page
+            log.warning("the background tab did not show up; opening a plain one")
+        except BrowserNotConnected:
+            raise
+        except Exception as exc:
+            log.warning("Target.createTarget failed (%r); opening a plain tab", exc)
         return await self.context.new_page()
 
     async def read_in_background(

@@ -5,7 +5,7 @@ import dataclasses
 from datetime import datetime
 
 from stream_pilot.branding import OUTRO_SCENE, WATERMARK, Branding, live_title, watermark_transform
-from stream_pilot.events import DeckPress, ObsConnected, PowerPress
+from stream_pilot.events import DeckPress, EndRequested, ObsConnected, PowerPress
 from stream_pilot.holding import STUDIO_SCENE, Holding
 from stream_pilot.states import STATUS_FACES, State
 
@@ -148,7 +148,7 @@ async def test_long_press_gets_the_same_outro(make):
     rig = make(features=branding, site_extra=on())
     await rig.to_live()
     sleeps = rig.c.features[0]._sleep
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert [c[2] for c in sleeps.calls] == [OUTRO_SCENE] * 3
     assert rig.c.state == State.READY and rig.obs.model.program == MAIN
@@ -195,7 +195,7 @@ async def test_with_holding_the_next_pre_roll_holds_after_the_outro(make):
 
     rig = make(features=build, site_extra=on() + '\n[holding]\nenabled = true\n')
     await rig.to_live()
-    await rig.c.handle(DeckPress(0, long=True))
+    await rig.c.handle(EndRequested())
     await rig.settle()
     assert rig.c.state == State.READY
     assert rig.obs.model.program == STUDIO_SCENE

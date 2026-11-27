@@ -122,7 +122,7 @@ session_id = ""
 #[branding]
 # A small text watermark (a placeholder for a logo) in a corner of the camera
 # scenes; an outro card for outro_s seconds when a live is ended (power button,
-# long press or `stream-pilot press --long`), with a countdown on the status key;
+# two status-key presses or `stream-pilot press --long`), with a countdown on the status key;
 # and the live's title from [facebook] live_title_template (below). The OBS
 # sources are created if missing and can be restyled or replaced in OBS.
 #enabled = true

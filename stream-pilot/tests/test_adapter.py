@@ -137,7 +137,7 @@ async def test_full_flow_against_fixtures(stack, values, tmp_path, caplog):
     assert dom_pairs(path) == SEED
 
     await fb.park_dashboard()
-    assert dashboard.url == "about:blank"
+    assert dashboard.url.startswith(browser_mod.PARK_URL)  # parked, with a note for the host
 
     await cap.stop()
     assert cap.healthy() is False
@@ -336,3 +336,16 @@ async def test_check_fresh_skips_a_column_that_is_capturing(stack, tmp_path, qui
     monkeypatch.setattr(browser, "read_in_background", no_read)
     assert await cap.check_fresh(LIVE_ID) is False
     assert await cap.check_fresh("another live") is False
+
+
+async def test_live_ended_reads_the_column(stack, tmp_path):
+    cfg, browser, fb, cap = stack
+    await fb.connect()
+    await cap.start(LIVE_ID, tmp_path / "ended")
+    col = cap.dom_capture.attached_page
+    assert await cap.live_ended(LIVE_ID) is False
+    await col.evaluate("""() => { const b = document.createElement('div');
+        b.setAttribute('role', 'button'); b.textContent = 'Live video ended';
+        document.body.append(b); }""")
+    assert await cap.live_ended(LIVE_ID) is True
+    assert await cap.live_ended("another live") is False

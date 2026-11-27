@@ -9,7 +9,7 @@ from PIL import Image
 from stream_pilot import deck as deck_mod
 from stream_pilot.config import DeckCfg
 from stream_pilot.deck import StreamDeckAdapter, press_event, render_face
-from stream_pilot.events import DeckPress
+from stream_pilot.events import DeckDown, DeckPress
 from stream_pilot.states import STATUS_FACES, KeyFace, State
 
 SIZE = (80, 80)
@@ -294,8 +294,8 @@ async def test_key_down_up_from_other_thread_emits_press_on_loop(adapters):
     t = threading.Thread(target=lib_thread)
     t.start()
     t.join()
-    await wait_for(lambda: seen)
-    assert seen == [(DeckPress(2, long=False), loop_thread)]
+    await wait_for(lambda: len(seen) >= 2)
+    assert seen == [(DeckDown(2), loop_thread), (DeckPress(2, long=False), loop_thread)]
 
 
 async def test_long_press_is_long(adapters, monkeypatch):
@@ -313,8 +313,8 @@ async def test_long_press_is_long(adapters, monkeypatch):
     monkeypatch.setattr(deck_mod, "time", types.SimpleNamespace(monotonic=lambda: next(clock)))
     deck.callback(deck, 0, True)
     deck.callback(deck, 0, False)
-    await wait_for(lambda: seen)
-    assert seen == [DeckPress(0, long=True)]
+    await wait_for(lambda: len(seen) >= 2)
+    assert seen == [DeckDown(0), DeckPress(0, long=True)]
 
 
 async def test_key_up_without_down_is_ignored(adapters):

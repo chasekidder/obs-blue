@@ -243,6 +243,10 @@ def group_name_pattern(group_name: str) -> re.Pattern:
 # URL (Facebook keeps it) so the column is never confused with the main producer tab, which
 # shows the same dashboard during go-live.
 COMMENTS_URL_MARKER = "#stream-pilot-comments"
+# The live's dashboard (the comments column) once the live was ended on Facebook, e.g.
+# from the host's phone: the "End live video" button becomes "Live video ended" and a
+# notice "Your live video has ended" appears (seen 2026-11-26).
+LIVE_ENDED_TEXT = re.compile(r"^\s*(live video ended|your live video has ended\.?)\s*$", re.I)
 
 
 def popout_url_fragment(live_id: str) -> str:

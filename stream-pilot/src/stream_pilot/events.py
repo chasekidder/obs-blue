@@ -24,6 +24,30 @@ class RetryRequested:
 
 
 @dataclass(frozen=True)
+class DeckDown:
+    """A Stream Deck key went down (its DeckPress follows on release)."""
+
+    key: int
+
+
+@dataclass(frozen=True)
+class PauseRequested:
+    """``stream-pilot pause`` / the desktop icon: toggle pause."""
+
+
+@dataclass(frozen=True)
+class EndRequested:
+    """``stream-pilot press --long``: end a live at once (no confirmation press)."""
+
+
+@dataclass(frozen=True)
+class ProgramSceneChanged:
+    """OBS's program scene changed (by stream-pilot or by the host in OBS)."""
+
+    name: str
+
+
+@dataclass(frozen=True)
 class Tick:
     pass
 
@@ -40,4 +64,5 @@ class ObsConnected:
 
 Event = (
     DeckPress | PowerPress | ObsStreamState | RetryRequested | Tick | SsnStalled | ObsConnected
+    | EndRequested | ProgramSceneChanged | DeckDown | PauseRequested
 )

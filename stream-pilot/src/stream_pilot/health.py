@@ -44,6 +44,8 @@ def format_status(status: dict, now: float | None = None) -> str:
     state_line = f"state: {state}"
     if _is_number(since):
         state_line += f" (since {_fmt_duration(now - since)})"
+    if status.get("paused") is True:
+        state_line += ", PAUSED (stream-pilot changes nothing until resumed)"
 
     updated = status.get("updated_at")
     updated_line = (
