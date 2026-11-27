@@ -138,7 +138,7 @@ async def test_live_folder_copies_finished_files_only(tmp_path):
     inbox = tmp_path / "inbox"
     d = stream(tmp_path)
     assert await Uploader(cfg_for(tmp_path, inbox)).upload_stream(d) is False
-    out = inbox / d.name
+    out = inbox / "streams" / d.name
     assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()) == [
         "audio/manifest.jsonl", "audio/s01-0000.opus", "audio/s01-0001.opus",
         "comments.jsonl", "stream.json",
@@ -155,7 +155,7 @@ async def test_comments_are_appended_and_a_partial_line_completed(tmp_path):
     with (d / "comments.jsonl").open("ab") as f:
         f.write(b'6blue 7"}\n{"text":"c"}\n')
     await u.upload_stream(d)
-    assert (inbox / d.name / "comments.jsonl").read_bytes() == (d / "comments.jsonl").read_bytes()
+    assert (inbox / "streams" / d.name / "comments.jsonl").read_bytes() == (d / "comments.jsonl").read_bytes()
 
 
 @needs_rsync
@@ -165,12 +165,12 @@ async def test_done_goes_last_and_marks_the_folder(tmp_path):
     runner = Recorded()
     u = Uploader(cfg_for(tmp_path, inbox), run=runner)
     assert await u.upload_stream(d) is True
-    assert runner.argvs[-1][-2:] == [str(d / "DONE"), f"{inbox}/{d.name}/"]
+    assert runner.argvs[-1][-2:] == [str(d / "DONE"), f"{inbox}/streams/{d.name}/"]
     assert (d / UPLOADED).exists()
     # and for real:
     (d / UPLOADED).unlink()
     assert await Uploader(cfg_for(tmp_path, inbox)).upload_stream(d) is True
-    assert (inbox / d.name / "DONE").exists()
+    assert (inbox / "streams" / d.name / "DONE").exists()
 
 
 async def test_done_is_not_sent_when_something_failed(tmp_path):
@@ -189,10 +189,10 @@ async def test_heartbeat_only_while_stream_pilot_runs(tmp_path):
     status.parent.mkdir(parents=True)
     status.write_text(json.dumps({"state": "LIVE", "updated_at": time.time() - 1000}))
     await Uploader(cfg).heartbeat()
-    assert not (inbox / "_status").exists()
+    assert not (inbox / "status").exists()
     status.write_text(json.dumps({"state": "LIVE", "updated_at": time.time()}))
     await Uploader(cfg).heartbeat()
-    assert json.loads((inbox / "_status" / "status.json").read_text())["state"] == "LIVE"
+    assert json.loads((inbox / "status" / "status.json").read_text())["state"] == "LIVE"
 
 
 @needs_rsync
@@ -207,9 +207,9 @@ async def test_run_all_copies_failures_and_applies_retention(tmp_path):
     recent = stream(tmp_path, "2026-11-20_1500-2", done=True)
     live = stream(tmp_path, "2026-11-24_1500-3")
     assert await Uploader(cfg).run_all() == 0
-    assert (inbox / "_failures" / fail.name / "page.html").exists()
+    assert (inbox / "failures" / fail.name / "page.html").exists()
     assert not old.exists()  # copied first, then older than 90 days
-    assert (inbox / old.name / "DONE").exists()
+    assert (inbox / "streams" / old.name / "DONE").exists()
     assert recent.exists() and (recent / UPLOADED).exists()
     assert live.exists() and not (live / UPLOADED).exists()
 
@@ -242,7 +242,7 @@ async def test_remote_upload_never_prompts_and_pins_the_host_key(tmp_path):
                 f"UserKnownHostsFile={keys}/upload_known_hosts", f"-i {keys}/upload_ed25519",
                 "-p 2222"):
         assert opt in ssh
-    assert argv[-1] == "pc@home.example:inbox/2026-11-24_1500-42/"
+    assert argv[-1] == "pc@home.example:inbox/streams/2026-11-24_1500-42/"
     assert (keys / "upload_known_hosts").read_text() == "[home.example]:2222 ssh-ed25519 AAAAC3Nza\n"
     assert (keys / "upload_ed25519").stat().st_mode & 0o777 == 0o600
     assert (keys / "upload_ed25519.pub").read_text().startswith("ssh-ed25519 ")
@@ -325,7 +325,7 @@ async def test_end_writes_the_journal_then_done_then_copies_the_folder(make, tmp
     await rig.settle()
     assert (sd / "journal.txt").read_text().startswith("2026-11-24T15:00:00")
     assert (sd / "journal.txt").stat().st_mtime_ns <= (sd / "DONE").stat().st_mtime_ns
-    out = tmp_path / "inbox" / sd.name
+    out = tmp_path / "inbox" / "streams" / sd.name
     assert (out / "DONE").exists() and (out / "journal.txt").exists()
     assert (sd / UPLOADED).exists()
     assert ("system.stop_user_unit", SERVICE) in rig.system.calls
@@ -427,7 +427,7 @@ async def test_a_run_stops_at_its_budget_and_the_live_folder_goes_first(tmp_path
 
     async def slow(argv):
         order.append(argv[-1])
-        if "_failures" in argv[-1]:
+        if "failures" in argv[-1]:
             await asyncio.Event().wait()  # a huge backlog
         return 0
 
@@ -435,7 +435,7 @@ async def test_a_run_stops_at_its_budget_and_the_live_folder_goes_first(tmp_path
     assert await Uploader(cfg, run=slow).run_all(budget_s=0.3) == 0
     assert time.monotonic() - started < 1.5
     assert order[0].endswith(f"{live.name}/") and any(o.endswith(f"{old.name}/") for o in order)
-    assert order[-1].endswith("_failures/")
+    assert order[-1].endswith("/failures/")
 
 
 @needs_rsync
@@ -464,11 +464,11 @@ async def test_diag_files_go_up_once_the_collector_wrote_its_summary(tmp_path):
     (d / "diag" / "obs.jsonl").write_text("{}\n")
     u = Uploader(cfg_for(tmp_path, str(tmp_path / "server")), keys_dir=tmp_path / "keys")
     assert await u.upload_stream(d) is False  # the collector is still writing
-    assert not (tmp_path / "server" / d.name / "diag").exists()
+    assert not (tmp_path / "server" / "streams" / d.name / "diag").exists()
     (d / "diag" / "summary.txt").write_text("summary\n")
     assert await u.upload_stream(d) is True
-    assert (tmp_path / "server" / d.name / "diag" / "summary.txt").exists()
-    assert (tmp_path / "server" / d.name / "diag" / "obs.jsonl").exists()
+    assert (tmp_path / "server" / "streams" / d.name / "diag" / "summary.txt").exists()
+    assert (tmp_path / "server" / "streams" / d.name / "diag" / "obs.jsonl").exists()
 
 
 @needs_rsync
@@ -495,7 +495,7 @@ async def test_config_backup_copies_on_change_at_most_hourly_and_never_the_key(t
     u = Uploader(cfg_for(tmp_path, str(tmp_path / "server")), keys_dir=tmp_path / "keys",
                  clock=lambda: now[0])
     assert await u.config_backup() is True
-    snaps = sorted((tmp_path / "server" / "_config").iterdir())
+    snaps = sorted((tmp_path / "server" / "config").iterdir())
     assert len(snaps) == 1
     got = {p.relative_to(snaps[0]).as_posix() for p in snaps[0].rglob("*") if p.is_file()}
     assert got == {".config/obs-studio/basic/scenes/Untitled.json", ".config/obs-studio/user.ini",
@@ -505,7 +505,7 @@ async def test_config_backup_copies_on_change_at_most_hourly_and_never_the_key(t
     (home / ".config/obs-studio/user.ini").write_text("[General]\nchanged=1\n")
     now[0] += 60  # changed, but within the hour
     await u.config_backup()
-    assert len(list((tmp_path / "server" / "_config").iterdir())) == 1
+    assert len(list((tmp_path / "server" / "config").iterdir())) == 1
     now[0] += 3600
     await u.config_backup()
-    assert len(list((tmp_path / "server" / "_config").iterdir())) == 2
+    assert len(list((tmp_path / "server" / "config").iterdir())) == 2

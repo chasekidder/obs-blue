@@ -4,18 +4,18 @@
 60 s by ``stream-pilot-upload.timer`` while the switch is on) copies, at low
 CPU and I/O priority and at most ``bwlimit_kbps``:
 
-* ``status.json`` to ``<target>/_status/`` as a heartbeat, while stream-pilot
+* ``status.json`` to ``<target>/status/`` as a heartbeat, while stream-pilot
   is running (the file is fresh);
 * every stream folder not yet fully copied, the current live's first, to
-  ``<target>/<folder name>/``: the finished files (``stream.json``,
+  ``<target>/streams/<folder name>/``: the finished files (``stream.json``,
   ``report.txt``, ``journal.txt``, ``audio/manifest.jsonl`` and the clips it
   lists), ``comments.jsonl`` appended (it only grows; a partial last line is
   completed next time), and ``DONE`` last, once everything else is there.
   A folder whose ``DONE`` was copied gets a local ``.uploaded`` marker;
-* new failure snapshots from ``failures_dir`` to ``<target>/_failures/``;
+* new failure snapshots from ``failures_dir`` to ``<target>/failures/``;
 * with ``config_backup``, a copy of the configuration (OBS's scenes, profile and
   settings, stream-pilot's ``site.toml`` and ``secrets.toml``; never the upload
-  key) to ``<target>/_config/<date>_<time>/`` when it changed, at most every
+  key) to ``<target>/config/<date>_<time>/`` when it changed, at most every
   ``config_every_h`` hours;
 
 and then deletes local stream folders that are fully copied and older than
@@ -56,8 +56,10 @@ KEY_NAME = "upload_ed25519"
 KNOWN_HOSTS_NAME = "upload_known_hosts"
 UPLOADED = ".uploaded"
 JOURNAL = "journal.txt"
-STATUS_DIR = "_status"
-FAILURES_DIR = "_failures"
+# The target's layout: one folder per kind of data.
+STREAMS_DIR = "streams"
+STATUS_DIR = "status"
+FAILURES_DIR = "failures"
 SERVICE = "stream-pilot-upload.service"
 TIMER = "stream-pilot-upload.timer"
 SERVER_ALIVE_S = 5
@@ -66,7 +68,7 @@ SERVER_ALIVE_S = 5
 RUN_BUDGET_S = 45.0
 _TERM_WAIT_S = 3.0
 _FINISHED = ("stream.json", "report.txt", JOURNAL)
-CONFIG_DIR_NAME = "_config"
+CONFIG_DIR_NAME = "config"
 DIAG = "diag"
 DIAG_SUMMARY = "summary.txt"
 # A diagnostics collector that never wrote its summary (it died) holds a folder back
@@ -269,7 +271,7 @@ class Uploader:
     async def upload_stream(self, stream_dir: Path) -> bool:
         """Copy one stream folder; True once it is fully copied (DONE included)."""
         stream_dir = Path(stream_dir)
-        dest = self._dest(stream_dir.name)
+        dest = self._dest(STREAMS_DIR, stream_dir.name)
         ok = True
         files = finished_files(stream_dir)
         if files:
