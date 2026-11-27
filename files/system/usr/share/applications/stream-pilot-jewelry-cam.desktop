@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stream Deck: JEWEL CAM
+Comment=Close-up camera on air (in the preview while the Starting soon card is on air)
+Exec=/usr/bin/stream-pilot key jewelry
+Icon=camera-photo
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;deck;

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stream Deck: MAIN CAM
+Comment=Main camera on air (in the preview while the Starting soon card is on air)
+Exec=/usr/bin/stream-pilot key main
+Icon=camera-web
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;deck;

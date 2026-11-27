@@ -211,6 +211,7 @@ class Controller:
         self._ended_checked_at: float | None = None
         self._fresh_next: float | None = None  # clock() of the next check; None: not scheduled
         self._ssn_heal: asyncio.Task | None = None
+        self._ssn_tabs: asyncio.Task | None = None
         self._ssn_healed_at: float | None = None
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -321,6 +322,7 @@ class Controller:
         await self._cancel_bounded(self._fresh, REATTACH_CANCEL_WAIT_S)
         await self._cancel_bounded(self._ended, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._ssn_heal)
+        await self._cancel_bounded(self._ssn_tabs, REATTACH_CANCEL_WAIT_S)
         await self._cancel(self._restart)
         await self._cancel(self._flow)
         for task in list(self._feature_tasks):
@@ -332,7 +334,7 @@ class Controller:
             pending = {
                 t
                 for t in (self._flow, self._restart, self._reattach, self._fresh, self._ended,
-                          self._ssn_heal,
+                          self._ssn_heal, self._ssn_tabs,
                           *self._feature_tasks)
                 if t is not None and not t.done()
             }
@@ -534,6 +536,7 @@ class Controller:
 
     async def _reconcile(self) -> None:
         """After a pause: setup again where it was stopped, end a live whose stream is gone."""
+        self._maybe_ensure_ssn_tabs()  # the host may have closed them meanwhile
         if self.state in _SETUP_STATES or self.state == State.ERROR:
             await self._retry()
         elif self.state in LIVE_STATES and self._flow_idle():
@@ -691,6 +694,7 @@ class Controller:
         self._write_status()
         if self._paused:
             return  # paused: no checks that could change anything
+        self._maybe_ensure_ssn_tabs()
         if (self.state == State.ERROR and self._flow_idle() and self._error_at is not None
                 and self.clock() - self._error_at >= ERROR_RETRY_S):
             log.info("retrying setup %.0fs after the error", self.clock() - self._error_at)
@@ -1083,6 +1087,24 @@ class Controller:
         if not await self._setup_phase():
             return  # a live is running: leave it (and its state) alone
         self._transition(State.READY)
+
+    def _maybe_ensure_ssn_tabs(self) -> None:
+        """SSN's tabs closed (e.g. by the host): open them again, in any state but ENDING."""
+        ensure = getattr(self.fb, "ensure_ssn_tabs", None)
+        if ensure is None or not self.cfg.ssn.enabled or self.state == State.ENDING:
+            return
+        if self._ssn_tabs is not None and not self._ssn_tabs.done():
+            return
+
+        async def run() -> None:
+            try:
+                await asyncio.wait_for(ensure(), SSN_REFRESH_TIMEOUT_S)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.debug("ensure_ssn_tabs failed: %r", exc)
+
+        self._ssn_tabs = asyncio.get_running_loop().create_task(run())
 
     def _on_ssn_stalled(self) -> None:
         """SSN's comment relay is down: have it reopen its background tab, in any state.

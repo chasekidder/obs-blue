@@ -623,6 +623,25 @@ class CdpBrowser:
         log.info("closed %d SSN background tab(s); SSN reopened it", closed)
         return closed
 
+    async def ensure_ssn_tabs(self) -> list[str]:
+        """Open SSN's helper and background tabs if they are gone (e.g. the host closed
+        them); a tab that is open is left alone. Returns what was opened."""
+        if ssn_helper_url(self.cfg.user_data_dir) is None:
+            return []  # the extension is not installed
+        session = await self._browser_session()
+        opened = []
+        background = f"chrome-extension://{SSN_EXTENSION_ID}/{SSN_BACKGROUND_PAGE}"
+        if not await self._ssn_helper_open(session, background):
+            await session.send("Target.createTarget", {"url": background, "background": True})
+            opened.append("background")
+        helper = ssn_helper_url(self.cfg.user_data_dir)
+        if helper and not await self._ssn_helper_open(session, helper):
+            await self._open_ssn_helper()
+            opened.append("helper")
+        if opened:
+            log.warning("SSN's %s tab(s) were closed; opened them again", " and ".join(opened))
+        return opened
+
     # ---- SSN helper tab -----------------------------------------------------
 
     async def _open_ssn_helper(self) -> None:

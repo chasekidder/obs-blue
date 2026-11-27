@@ -811,11 +811,15 @@ class FakeCdp:
         self.calls.append(("refresh_ssn_background",))
         return 1
 
+    async def ensure_ssn_tabs(self):
+        self.calls.append(("ensure_ssn_tabs",))
+        return []
+
 
 async def test_facebook_adapter_refresh_ssn_connects_then_delegates(cfg):
     cdp = FakeCdp(cfg, connected=False)
     await FacebookAdapter(cfg, cdp).refresh_ssn()
-    assert cdp.calls == [("connect",), ("refresh_ssn_background",)]
+    assert cdp.calls == [("connect",), ("refresh_ssn_background",), ("ensure_ssn_tabs",)]
 
 
 async def test_facebook_adapter_methods_surface_a_failed_connect_clearly(cfg):
@@ -870,7 +874,7 @@ async def test_facebook_adapter_reconnects_when_playwright_driver_died(cfg):
     cdp.driver_dead = True
     fb = FacebookAdapter(cfg, cdp)
     await fb.refresh_ssn()
-    assert cdp.calls == [("connect",), ("refresh_ssn_background",)]
+    assert cdp.calls == [("connect",), ("refresh_ssn_background",), ("ensure_ssn_tabs",)]
 
 
 async def test_facebook_adapter_does_not_connect_when_already_connected(cfg):
@@ -1712,3 +1716,28 @@ async def test_connect_gives_downloads_back_to_chromium(cfg, fake_playwright):
     b = CdpBrowser(cfg.cdp)
     await b.connect()
     assert ("Browser.setDownloadBehavior", {"behavior": "default"}) in pw.browser.calls
+
+
+# ------------------------------------------------ SSN tabs closed by the host
+
+
+async def test_ensure_ssn_tabs_reopens_only_what_is_missing(cfg, tmp_path):
+    write_manifest(tmp_path / "profile", "1_0", {"action": {"default_popup": "popup.html"}})
+    background = f"chrome-extension://{SSN_EXTENSION_ID}/background.html"
+    helper = f"chrome-extension://{SSN_EXTENSION_ID}/popup.html"
+    b, ctx, fb = make_browser(cfg)
+    fb.targets = [{"type": "page", "url": helper, "targetId": "H"}]  # the host closed background.html
+    assert await b.ensure_ssn_tabs() == ["background"]
+    created = [c[1]["url"] for c in fb.calls if c[0] == "Target.createTarget"]
+    assert created == [background]
+    before = len(fb.calls)
+    fb.targets = [{"type": "page", "url": helper, "targetId": "H"},
+                  {"type": "page", "url": background, "targetId": "B"}]
+    assert await b.ensure_ssn_tabs() == []
+    assert not [c for c in fb.calls[before:] if c[0] in ("Target.createTarget", "Target.closeTarget")]
+
+
+async def test_ensure_ssn_tabs_without_the_extension_does_nothing(cfg):
+    b, ctx, fb = make_browser(cfg)
+    assert await b.ensure_ssn_tabs() == []
+    assert fb.calls == []

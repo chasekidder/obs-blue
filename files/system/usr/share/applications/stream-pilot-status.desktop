@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stream Deck: status key (Go live / end)
+Comment=GO LIVE when green; while live, click twice within 5 s to end; retries when ERROR
+Exec=/usr/bin/stream-pilot press
+Icon=media-record
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;deck;

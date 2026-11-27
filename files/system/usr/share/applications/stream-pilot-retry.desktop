@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stream Deck: RETRY
+Comment=Run the Facebook setup again (ignored while live); resumes stream-pilot when paused
+Exec=/usr/bin/stream-pilot retry
+Icon=view-refresh
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;deck;

@@ -111,6 +111,21 @@ def cmd_press(args: argparse.Namespace) -> int:
         return 1
 
 
+# `stream-pilot key NAME`: the deck key's press, as a signal to the controller.
+KEY_SIGNALS = {"af": "SIGRTMIN+2", "main": "SIGRTMIN+3", "jewelry": "SIGRTMIN+4"}
+
+
+def cmd_key(args: argparse.Namespace) -> int:
+    try:
+        return _run_command(
+            ["systemctl", "--user", "kill", "--kill-whom=main", "-s", KEY_SIGNALS[args.name],
+             "stream-pilot.service"]
+        )
+    except OSError as exc:
+        print(f"key failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_pause(_args: argparse.Namespace) -> int:
     """Pause stream-pilot (it changes nothing until resumed), or resume it."""
     try:
@@ -334,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_press,
             "press the status key: GO LIVE when green; --long ends a live without powering off",
         ),
+        "key": (
+            cmd_key,
+            "press a Stream Deck key: af (AF / MACRO), main (MAIN CAM), jewelry (JEWEL CAM); "
+            "the status key is `press`, RETRY is `retry`",
+        ),
         "pause": (
             cmd_pause,
             "pause stream-pilot (it changes nothing: no setup, restarts or window moves) "
@@ -415,6 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parsers["record"].add_argument("stream_dir", metavar="STREAM_DIR")
     parsers["diag"].add_argument("stream_dir", metavar="STREAM_DIR")
+    parsers["key"].add_argument("name", choices=sorted(KEY_SIGNALS))
     parsers["rebalance"].add_argument(
         "--camera", default=None, metavar="NAME",
         help="camera name from the config (default: [wb_freeze] camera)",

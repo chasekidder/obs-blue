@@ -312,6 +312,11 @@ async def run_app(cfg: Config, dry_run: bool, record_dir: Path | None = None) ->
         pause_sig = signal.SIGRTMIN + 1
         loop.add_signal_handler(pause_sig, lambda: controller.sink(PauseRequested()))
         installed.append(pause_sig)
+        # `stream-pilot key af|main|jewelry` (SIGRTMIN+2..4): the AF, MAIN CAM and JEWEL CAM keys.
+        for offset, key in ((2, 1), (3, 2), (4, 5)):
+            sig = signal.SIGRTMIN + offset
+            loop.add_signal_handler(sig, lambda key=key: controller.sink(DeckPress(key)))
+            installed.append(sig)
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, on_stop_signal, sig.name)
             installed.append(sig)

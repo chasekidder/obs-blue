@@ -288,6 +288,16 @@ def test_press_long_cli_sends_sigrtmin(home, monkeypatch):
                       "stream-pilot.service"]]
 
 
+@pytest.mark.parametrize("name, sig", [("af", "SIGRTMIN+2"), ("main", "SIGRTMIN+3"),
+                                       ("jewelry", "SIGRTMIN+4")])
+def test_key_cli_sends_the_keys_signal(home, monkeypatch, name, sig):
+    calls = []
+    monkeypatch.setattr(cli, "_run_command", lambda argv: calls.append(argv) or 0)
+    assert main(["key", name]) == 0
+    assert calls == [["systemctl", "--user", "kill", "--kill-whom=main", "-s", sig,
+                      "stream-pilot.service"]]
+
+
 def test_pause_cli_sends_sigrtmin_plus_one(home, monkeypatch):
     calls = []
     monkeypatch.setattr(cli, "_run_command", lambda argv: calls.append(argv) or 0)

@@ -82,7 +82,8 @@ The power guard powers off 15 s after a press unless `status.json` says ENDING, 
 | `stream-pilot press` | as one short status-key press (so twice in 5 s ends a live) |
 | `stream-pilot press --long` | ends a live at once (automation, tests); otherwise ignored |
 | `stream-pilot retry` | as the `RETRY` key |
-| `stream-pilot pause` (also the "Pause / resume stream-pilot" launcher) | toggles pause |
+| `stream-pilot pause` (also the "Stream Deck: pause / resume" launcher) | toggles pause |
+| `stream-pilot key af\|main\|jewelry` | as the AF, MAIN CAM and JEWEL CAM keys; every key has a "Stream Deck: ..." application-menu entry |
 
 ### OBS
 
@@ -105,6 +106,7 @@ The power guard powers off 15 s after a press unless `status.json` says ENDING, 
 |---|---|---|---|---|
 | Host opens a new tab or window | **G-10** today the layout script forces every Chromium window into the right column under the always-on-top comments column (and stops it maximizing), and setup uses "the first ordinary tab" (could take the host's tab) → the host's windows and tabs are never moved, covered, adopted or navigated: stream-pilot uses only its own tab (tracked by its CDP target id) | ← | ← | ← |
 | Host closes stream-pilot's Facebook tab | **G-10** → setup opens a new one | **G-10** today stays green with no producer page (Go live then fails) → setup again | not needed while live (it is parked); setup after the end opens a new one | — |
+| Host closes SSN's background or helper tab | **G-15** today stays closed (SSN stops relaying; 2026-11-26 while paused) → reopened on the next Tick (every 15 s, unless paused) and on resume; open tabs are never touched | ← | ← | — |
 | Host closes the comments column | — | — | re-opened within a tick (capture re-attach) | — |
 | Host closes every Chromium window / Chromium exits 0 | **G-8** today not restarted → `Restart=always` | ← | ← column re-opened after the restart | power steps stop it on purpose |
 | Chromium crashes | restarted (3 s), reconnect | ← | ← | — |

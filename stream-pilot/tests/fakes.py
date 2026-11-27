@@ -403,6 +403,10 @@ class FakeFacebook(Gated):
         self.calls.append(("fb.refresh_ssn",))
         self._refresh_ssn.raise_next()
 
+    async def ensure_ssn_tabs(self) -> list[str]:
+        self.calls.append(("fb.ensure_ssn_tabs",))
+        return []
+
     async def logged_in(self) -> bool:
         self.calls.append(("fb.logged_in",))
         val = self._logged_in.next()

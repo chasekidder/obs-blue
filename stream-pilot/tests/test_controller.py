@@ -722,7 +722,8 @@ async def test_ready_tick_without_preview_loss_does_nothing(rig):
     await rig.c.handle(Tick())
     await rig.settle()
     assert rig.c.state == State.READY
-    assert rig.fb.calls == [("fb.preview_lost",)]
+    # read-only checks: the preview, and that SSN's tabs are still open
+    assert sorted(rig.fb.calls) == [("fb.ensure_ssn_tabs",), ("fb.preview_lost",)]
 
 
 async def test_go_live_press_right_after_preview_lost_tick_does_not_go_live(make):
@@ -2605,3 +2606,16 @@ async def test_g12_not_while_paused(make):
     cap.ended = True
     await tick(controller_mod.ENDED_AFTER_S * 3)
     assert rig.c.state == State.RECONNECTING
+
+
+async def test_ssn_tabs_are_checked_on_ticks_and_after_resume_but_not_while_paused(make):
+    rig = make()
+    await rig.to_ready()
+    await rig.c.handle(PauseRequested())
+    rig.clear()
+    await rig.c.handle(Tick())
+    await rig.settle()
+    assert ("fb.ensure_ssn_tabs",) not in rig.fb.calls
+    await rig.c.handle(PauseRequested())  # resume
+    await rig.settle()
+    assert ("fb.ensure_ssn_tabs",) in rig.fb.calls

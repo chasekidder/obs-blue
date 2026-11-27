@@ -123,6 +123,8 @@ grep -qx "MemoryMax=256M" "$diag"
 stream-pilot diag --help > /dev/null
 stream-pilot pause --help > /dev/null
 grep -qx "Exec=/usr/bin/stream-pilot pause" /usr/share/applications/stream-pilot-pause.desktop
+for d in status autofocus main-cam retry jewelry-cam; do test -f /usr/share/applications/stream-pilot-$d.desktop; done
+stream-pilot key --help > /dev/null
 test -f "$units/stream-pilot-upload.timer"
 grep -qx "ExecStart=/usr/bin/stream-pilot upload" "$units/stream-pilot-upload.service"
 grep -qx "IOSchedulingClass=idle" "$units/stream-pilot-upload.service"

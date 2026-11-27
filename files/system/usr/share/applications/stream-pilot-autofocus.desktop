@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Stream Deck: AF / MACRO
+Comment=Switch the active camera between autofocus and macro (closest focus)
+Exec=/usr/bin/stream-pilot key af
+Icon=zoom-in
+Terminal=false
+Categories=AudioVideo;
+Keywords=stream;pilot;deck;

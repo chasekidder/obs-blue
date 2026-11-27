@@ -110,6 +110,12 @@ class FacebookAdapter:
     async def refresh_ssn(self) -> None:
         await self._ensure_connected()
         await self._browser.refresh_ssn_background()
+        await self._browser.ensure_ssn_tabs()
+
+    async def ensure_ssn_tabs(self) -> list[str]:
+        """Reopen SSN's tabs if they were closed (never touches an open one)."""
+        await self._ensure_connected()
+        return await self._browser.ensure_ssn_tabs()
 
     async def logged_in(self) -> bool:
         producer = await self._producer_for_dashboard()

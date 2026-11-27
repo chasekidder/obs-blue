@@ -16,7 +16,7 @@ from stream_pilot import app
 from stream_pilot.browser import CdpBrowser
 from stream_pilot.config import load_config
 from stream_pilot.controller import Controller
-from stream_pilot.events import EndRequested, DeckPress, RetryRequested, Tick
+from stream_pilot.events import EndRequested, PauseRequested, DeckPress, RetryRequested, Tick
 from stream_pilot.fb.adapter import CaptureAdapter, FacebookAdapter
 from stream_pilot.persist import StateStore, StatusWriter
 from stream_pilot.ports import StepFailed
@@ -465,7 +465,8 @@ async def test_not_wired_capture():
 def restore_signals():
     saved = {
         s: signal.getsignal(s)
-        for s in (signal.SIGUSR1, signal.SIGUSR2, signal.SIGRTMIN, signal.SIGTERM, signal.SIGINT)
+        for s in (signal.SIGUSR1, signal.SIGUSR2, signal.SIGRTMIN, signal.SIGTERM, signal.SIGINT,
+                  *(signal.SIGRTMIN + n for n in range(1, 5)))
     }
     yield
     for s, h in saved.items():
@@ -602,6 +603,20 @@ async def test_run_app_sigrtmin_enqueues_a_status_key_long_press(cfg, monkeypatc
                 break
             await asyncio.sleep(0.01)
         assert controller.events == [EndRequested()]
+
+
+@pytest.mark.parametrize("offset, event", [
+    (1, PauseRequested()), (2, DeckPress(1)), (3, DeckPress(2)), (4, DeckPress(5))])
+async def test_run_app_remote_key_signals(cfg, monkeypatch, restore_signals, offset, event):
+    controller = FakeController()
+    patch_build(monkeypatch, controller)
+    async with running_app(cfg, controller):
+        os.kill(os.getpid(), signal.SIGRTMIN + offset)
+        for _ in range(200):
+            if controller.events:
+                break
+            await asyncio.sleep(0.01)
+        assert controller.events == [event]
 
 
 async def test_run_app_passes_record_dir_to_build_app(cfg, monkeypatch, restore_signals, tmp_path):
