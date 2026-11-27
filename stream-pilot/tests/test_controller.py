@@ -2619,3 +2619,13 @@ async def test_ssn_tabs_are_checked_on_ticks_and_after_resume_but_not_while_paus
     await rig.c.handle(PauseRequested())  # resume
     await rig.settle()
     assert ("fb.ensure_ssn_tabs",) in rig.fb.calls
+
+
+async def test_first_autofocus_press_with_the_holding_card_on_air_toggles_the_real_state(make):
+    # 2026-11-26 on the PC: the Starting soon card is on air at boot, so the boot-time
+    # sync learns nothing; the first AF press must still switch to MACRO.
+    rig = make(obs=FakeObs(scene="Holding"), camera=FakeCamera(autofocus={"/dev/video0": True}))
+    await rig.to_ready()
+    await rig.c.handle(DeckPress(1))
+    assert ("camera.set_macro", "/dev/video0") in rig.camera.calls
+    assert rig.deck.faces[1].label == "MACRO"

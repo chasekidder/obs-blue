@@ -93,6 +93,11 @@ connect_timeout_s = 10
 final_timeout_s = 30
 # Local stream folders are deleted once fully uploaded and older than this.
 retention_days = 90
+# Also copy the configuration (OBS scenes/profile/settings, site.toml, secrets.toml;
+# never the upload key) to <target>/_config/<date>_<time>/ when it changed, at most
+# every config_every_h hours.
+config_backup = true
+config_every_h = 1
 
 [holding]
 # A scene without the microphone on air before Go Live (the pre-roll), switched

@@ -1589,6 +1589,18 @@ class Controller:
         if cfg is None:
             log.warning("no camera %r configured", cam)
             return
+        if cam not in self._autofocus and cam not in self._macro:
+            # Not known yet (e.g. the holding card was on air at boot): ask the camera,
+            # or the first press would just switch on autofocus that is already on.
+            try:
+                on = await self._bounded("get_autofocus", self.camera.get_autofocus(cfg.device))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("get_autofocus failed: %r", exc)
+                on = None
+            if on is not None:
+                self._autofocus[cam] = on
         macro = self._autofocus.get(cam, False)
         try:
             if macro:

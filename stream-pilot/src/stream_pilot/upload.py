@@ -13,6 +13,10 @@ CPU and I/O priority and at most ``bwlimit_kbps``:
   completed next time), and ``DONE`` last, once everything else is there.
   A folder whose ``DONE`` was copied gets a local ``.uploaded`` marker;
 * new failure snapshots from ``failures_dir`` to ``<target>/_failures/``;
+* with ``config_backup``, a copy of the configuration (OBS's scenes, profile and
+  settings, stream-pilot's ``site.toml`` and ``secrets.toml``; never the upload
+  key) to ``<target>/_config/<date>_<time>/`` when it changed, at most every
+  ``config_every_h`` hours;
 
 and then deletes local stream folders that are fully copied and older than
 ``retention_days``.
@@ -62,6 +66,20 @@ SERVER_ALIVE_S = 5
 RUN_BUDGET_S = 45.0
 _TERM_WAIT_S = 3.0
 _FINISHED = ("stream.json", "report.txt", JOURNAL)
+CONFIG_DIR_NAME = "_config"
+DIAG = "diag"
+DIAG_SUMMARY = "summary.txt"
+# A diagnostics collector that never wrote its summary (it died) holds a folder back
+# at most this long after DONE.
+DIAG_WAIT_S = 600.0
+# Configuration copied by config_backup, relative to the home directory.
+CONFIG_PATHS = (
+    ".config/obs-studio/basic",
+    ".config/obs-studio/user.ini",
+    ".config/obs-studio/global.ini",
+    ".config/stream-pilot/site.toml",
+    ".config/stream-pilot/secrets.toml",
+)
 
 Runner = Callable[[list[str]], Awaitable[int]]
 
@@ -120,7 +138,19 @@ def finished_files(stream_dir: Path) -> list[str]:
         out.append(f"audio/{MANIFEST}")
         out.extend(f"audio/{name}" for name in clips(Manifest(manifest).records())
                    if (stream_dir / "audio" / name).is_file())
+    diag = stream_dir / DIAG
+    if (diag / DIAG_SUMMARY).is_file():  # the collector is done: nothing changes any more
+        out.extend(f"{DIAG}/{f.name}" for f in sorted(diag.iterdir()) if f.is_file())
     return out
+
+
+def diag_pending(stream_dir: Path, now: float) -> bool:
+    """True while the diagnostics collector may still write its last files."""
+    diag = Path(stream_dir) / DIAG
+    if not diag.is_dir() or (diag / DIAG_SUMMARY).is_file():
+        return False
+    done = Path(stream_dir) / stream_meta.DONE
+    return not done.exists() or now - done.stat().st_mtime < DIAG_WAIT_S
 
 
 def stream_folders(streams_dir: Path) -> list[Path]:
@@ -252,7 +282,7 @@ class Uploader:
         if comments.is_file():
             ok = await self._run(self._rsync("--append", str(comments), dest)) == 0 and ok
         done = stream_dir / stream_meta.DONE
-        if not ok or not done.exists():
+        if not ok or not done.exists() or diag_pending(stream_dir, self._clock()):
             return False
         if await self._run(self._rsync(str(done), dest)) != 0:
             return False
@@ -276,6 +306,39 @@ class Uploader:
             return True
         return await self._run(self._rsync("--exclude=*.tmp", f"{src}/",
                                            self._dest(FAILURES_DIR))) == 0
+
+    async def config_backup(self) -> bool:
+        """Copy the configuration when it changed, at most every config_every_h hours."""
+        if not self.up.config_backup:
+            return True
+        home = Path.home()
+        present = [rel for rel in CONFIG_PATHS if (home / rel).exists()]
+        if not present:
+            return True
+        sig = []
+        for rel in present:
+            path = home / rel
+            files = [path] if path.is_file() else sorted(f for f in path.rglob("*") if f.is_file())
+            sig += [f"{f.relative_to(home)}:{f.stat().st_size}:{int(f.stat().st_mtime)}" for f in files]
+        marker = self.cfg.paths.state_dir / "upload-config.json"
+        try:
+            last = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            last = {}
+        now = self._clock()
+        if last.get("sig") == sig or now - float(last.get("at", 0)) < self.up.config_every_h * 3600:
+            return True
+        stamp = time.strftime("%Y-%m-%d_%H%M%S", time.localtime(now))
+        with tempfile.NamedTemporaryFile("w", prefix="stream-pilot-config-", suffix=".list") as lst:
+            lst.write("\n".join(present) + "\n")
+            lst.flush()
+            ok = await self._run(self._rsync(f"--files-from={lst.name}", f"{home}/",
+                                             self._dest(CONFIG_DIR_NAME, stamp))) == 0
+        if ok:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"at": now, "sig": sig}))
+            log.info("upload: configuration copied to %s/%s", CONFIG_DIR_NAME, stamp)
+        return ok
 
     def retention(self) -> list[Path]:
         """Delete fully copied stream folders older than retention_days."""
@@ -310,6 +373,7 @@ class Uploader:
         steps += [lambda d=d: self.upload_stream(d)
                   for d in stream_folders(self.cfg.paths.streams_dir)]
         steps.append(self.failures)
+        steps.append(self.config_backup)
         for step in steps:
             left = deadline - loop.time()
             if left <= 0:

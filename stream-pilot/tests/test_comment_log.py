@@ -461,12 +461,12 @@ def test_report_matches_an_ssn_reply_despite_its_replying_to_prefix(tmp_path):
     # seen on the stream PC: SSN relays a reply as "Replying to <name>: <text>"
     clock = FakeClock(0.0)
     log, p = make(tmp_path, clock)
-    log.append_ssn(C("Chase Kidder", "Replying to Chase Kidder: No!"))
+    log.append_ssn(C("Jane Doe", "Replying to Jane Doe: No!"))
     clock.advance(1)
-    log.ingest_dom([C("Chase Kidder", "No!", "2426893617717237")], rescan=False)
+    log.ingest_dom([C("Jane Doe", "No!", "1111222233336666")], rescan=False)
     rep = build_report(p)
     assert field(rep, "matched") == 1
-    assert texts(p, "ssn") == ["Replying to Chase Kidder: No!"]  # the log keeps SSN's text
+    assert texts(p, "ssn") == ["Replying to Jane Doe: No!"]  # the log keeps SSN's text
 
 
 def test_report_window(tmp_path):

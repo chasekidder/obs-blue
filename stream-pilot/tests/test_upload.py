@@ -452,3 +452,60 @@ async def test_a_cut_off_copy_keeps_its_partial_file(tmp_path):
         await task
     kept = dest / "big"
     assert kept.exists() and 0 < kept.stat().st_size < src.stat().st_size
+
+
+# ------------------------------------------- diagnostics and configuration (2026-11-26)
+
+
+@needs_rsync
+async def test_diag_files_go_up_once_the_collector_wrote_its_summary(tmp_path):
+    d = stream(tmp_path, done=True)
+    (d / "diag").mkdir()
+    (d / "diag" / "obs.jsonl").write_text("{}\n")
+    u = Uploader(cfg_for(tmp_path, str(tmp_path / "server")), keys_dir=tmp_path / "keys")
+    assert await u.upload_stream(d) is False  # the collector is still writing
+    assert not (tmp_path / "server" / d.name / "diag").exists()
+    (d / "diag" / "summary.txt").write_text("summary\n")
+    assert await u.upload_stream(d) is True
+    assert (tmp_path / "server" / d.name / "diag" / "summary.txt").exists()
+    assert (tmp_path / "server" / d.name / "diag" / "obs.jsonl").exists()
+
+
+@needs_rsync
+async def test_a_dead_collector_holds_a_folder_back_only_ten_minutes(tmp_path):
+    d = stream(tmp_path, done=True)
+    (d / "diag").mkdir()
+    old = time.time() - up.DIAG_WAIT_S - 1
+    os.utime(d / stream_meta.DONE, (old, old))
+    u = Uploader(cfg_for(tmp_path, str(tmp_path / "server")), keys_dir=tmp_path / "keys")
+    assert await u.upload_stream(d) is True
+
+
+@needs_rsync
+async def test_config_backup_copies_on_change_at_most_hourly_and_never_the_key(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".config/obs-studio/basic/scenes").mkdir(parents=True)
+    (home / ".config/obs-studio/basic/scenes/Untitled.json").write_text("{}")
+    (home / ".config/obs-studio/user.ini").write_text("[General]\n")
+    (home / ".config/stream-pilot").mkdir(parents=True)
+    (home / ".config/stream-pilot/site.toml").write_text("[facebook]\n")
+    (home / ".config/stream-pilot/upload_ed25519").write_text("PRIVATE")
+    now = [1_800_000_000.0]
+    u = Uploader(cfg_for(tmp_path, str(tmp_path / "server")), keys_dir=tmp_path / "keys",
+                 clock=lambda: now[0])
+    assert await u.config_backup() is True
+    snaps = sorted((tmp_path / "server" / "_config").iterdir())
+    assert len(snaps) == 1
+    got = {p.relative_to(snaps[0]).as_posix() for p in snaps[0].rglob("*") if p.is_file()}
+    assert got == {".config/obs-studio/basic/scenes/Untitled.json", ".config/obs-studio/user.ini",
+                   ".config/stream-pilot/site.toml"}
+    now[0] += 60  # unchanged: nothing copied
+    await u.config_backup()
+    (home / ".config/obs-studio/user.ini").write_text("[General]\nchanged=1\n")
+    now[0] += 60  # changed, but within the hour
+    await u.config_backup()
+    assert len(list((tmp_path / "server" / "_config").iterdir())) == 1
+    now[0] += 3600
+    await u.config_backup()
+    assert len(list((tmp_path / "server" / "_config").iterdir())) == 2

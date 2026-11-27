@@ -35,6 +35,6 @@ Method: one test-Group live ("My Test Group"), with a temporary wall-clock text 
 | Live confirmed (`End live video` seen, state `LIVE`) | 15:55:44.7 |
 | Long press (stream stopped) | 15:57:56.9 |
 
-Replay (live 1811869990155044): duration 137.97 s; first frame shows 15:55:39, last frame 15:57:57.
+Replay (the test live): duration 137.97 s; first frame shows 15:55:39, last frame 15:57:57.
 
 **The replay does not include the pre-roll.** It starts about 3 s after the Go Live press (when Facebook starts the live, before stream-pilot sees the confirmation) and ends when the stream stops. The 9 minutes of pre-roll are not in it. So `[recording] replay_includes_preroll = false`, and a replay starts with at most about 3 s of whatever was on air at the press.

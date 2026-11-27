@@ -104,6 +104,10 @@ session_id = ""
 # boot finishes it).
 #final_timeout_s = 30
 # Delete a local stream folder once it is fully copied and older than this.
+# Also copy OBS's and stream-pilot's configuration (incl. secrets.toml) to
+# <target>/_config/<date>_<time>/ when it changed, at most every config_every_h hours.
+#config_backup = true
+#config_every_h = 1
 #retention_days = 90
 
 #[holding]

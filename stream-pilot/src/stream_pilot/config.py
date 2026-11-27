@@ -93,6 +93,8 @@ class UploadCfg:
     connect_timeout_s: int
     final_timeout_s: float
     retention_days: float
+    config_backup: bool
+    config_every_h: float
 
 
 @dataclass(frozen=True)
